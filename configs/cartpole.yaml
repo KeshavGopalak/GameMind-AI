@@ -1,0 +1,67 @@
+# CartPole is the smallest end-to-end test of GameMind AI.
+# The agent sees the four numerical CartPole state variables, not pixels.
+# Expected first run: PPO usually learns to balance for a while within ~50k
+# timesteps, but treat that as a smoke test rather than a guaranteed score.
+version: 1
+description: "Classic CartPole control with native state observations and PPO."
+
+game:
+  name: cartpole
+  adapter: gymnasium
+  params:
+    env_id: CartPole-v1
+  render_mode: null
+  seed: 42
+
+observation:
+  mode: state
+  width: 84
+  height: 84
+  stack: 1
+  normalize: false
+
+actions:
+  # Gymnasium provides CartPole's two actions (left/right).
+  frame_skip: 1
+  duration: 0.0
+  max_duration: 1.0
+  bindings: []
+
+reward:
+  components:
+    - type: native
+      scale: 1.0
+      name: cartpole_reward
+  clip: null
+
+episode:
+  max_steps: 500
+  terminate_on: null
+
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 512
+  batch_size: 128
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_envs: 4
+  checkpoint_freq: 10000
+  eval_freq: 10000
+  n_eval_episodes: 5
+  save_best: true
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

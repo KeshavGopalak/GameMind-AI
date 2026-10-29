@@ -1,0 +1,44 @@
+# Virtual environments and Python caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated training artifacts (keep the directories themselves)
+models/*
+!models/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+logs/*
+!logs/.gitkeep
+*.zip
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.npz
+
+# Local development files
+.env
+.env.*
+!.env.example
+*.log
+install.log
+dashboard_state.json
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+
+# Screenshots and recordings created during local debugging
+screenshots/
+recordings/

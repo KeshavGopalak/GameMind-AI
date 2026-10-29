@@ -1,0 +1,28 @@
+# GameMind AI — tested with Python 3.13.14 on Windows.
+# Python 3.11–3.13 are supported. Install into a fresh virtual environment:
+#
+#   python -m venv .venv
+#   .venv\Scripts\activate        (Windows)
+#   source .venv/bin/activate     (macOS/Linux)
+#   pip install -r requirements.txt
+#
+# PyTorch defaults to the CPU wheel from PyPI. For CUDA, install the matching
+# torch build from https://pytorch.org/get-started/locally/ before this file.
+
+numpy==2.5.4
+gymnasium[classic-control,box2d]==1.4.0
+stable-baselines3==2.9.2
+torch==2.15.0
+opencv-python-headless==5.0.0.93
+pygame==2.6.1
+tensorboard==2.21.0
+PyYAML==6.0.3
+mss==10.2.0
+pyautogui==0.9.54
+streamlit==1.66.1
+pandas==3.1.0
+pytest==9.2.0
+
+# Optional: MaskablePPO for games that expose genuinely invalid actions.
+# GameMind supports algorithm: maskable_ppo only when this is installed.
+# sb3-contrib==2.9.2

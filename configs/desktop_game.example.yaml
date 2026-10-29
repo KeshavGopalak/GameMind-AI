@@ -1,0 +1,137 @@
+# TEMPLATE ONLY — edit before running.
+#
+# This adapter sends real keyboard/mouse input to a real desktop window. It
+# cannot detect an arbitrary game's score, lives, or game-over screen by itself.
+# You must configure:
+#   1. a capture region that contains the game,
+#   2. the exact window title (require_window_focus: true),
+#   3. the restart key(s) if you want fresh episodes,
+#   4. at least one meaningful reward signal or template,
+#   5. optionally, a visual game-over template.
+#
+# Safeguards:
+#   * require_window_focus blocks input if the game window is not active,
+#   * episode.max_steps prevents indefinite keyboard control,
+#   * held keys are released after every action and on close,
+#   * PyAutoGUI failsafe: move the real mouse to a screen corner to abort.
+#
+# Safer first step: run this config with a test game in a windowed mode, keep
+# start_delay high, and watch the first episode before leaving it unattended.
+version: 1
+description: "Template for a real keyboard-controlled desktop game. Edit before use."
+
+game:
+  name: desktop_my_game
+  adapter: desktop
+  params:
+    # Absolute screen coordinates [x, y, width, height] in physical pixels.
+    # Set null to capture the whole selected monitor.
+    region: [100, 100, 800, 600]
+    monitor: 1
+    # REQUIRED SAFETY VALUE. Replace with your game's exact window-title
+    # substring. The run will refuse to send input until it is focused.
+    window_title: "REPLACE WITH YOUR GAME WINDOW TITLE"
+    require_window_focus: true
+    # Countdown before the first input, in seconds.
+    start_delay: 5.0
+    # Keys to press at the start of each episode to restart the game. This is
+    # game-specific; leave empty if you will reset the game yourself.
+    reset_keys: []
+    reset_delay: 1.0
+    reset_key_duration: 0.1
+    fps: 30
+  render_mode: null
+  seed: 42
+
+observation:
+  # Grayscale + frame stacking is the usual choice for screen-based control.
+  mode: grayscale
+  width: 84
+  height: 84
+  stack: 4
+  normalize: false
+
+actions:
+  # Desktop control uses one environment step per action; use duration, not
+  # frame_skip, to control how long a key is held.
+  frame_skip: 1
+  duration: 0.08
+  max_duration: 0.5
+  bindings:
+    - name: noop
+      keys: []
+    - name: left
+      keys: ["a"]
+    - name: right
+      keys: ["d"]
+    - name: jump
+      keys: ["space"]
+    - name: right_jump
+      keys: ["d", "space"]
+    - name: interact
+      keys: ["e"]
+    # Mouse example (uncomment only if the game needs it):
+    # - name: click_center
+    #   mouse_click: ["left"]
+    # - name: look_right
+    #   mouse_move: [80, 0]
+
+reward:
+  # These components only discourage wasting time. This is NOT enough to learn
+  # the game! Add a signal or template reward once you can detect progress.
+  components:
+    - type: constant
+      value: -0.01
+      name: time_penalty
+    # Example: reward a "level complete" badge found in a screenshot.
+    # - type: template
+    #   name: level_complete
+    #   template: assets/level_complete.png
+    #   region: [250, 80, 300, 80]
+    #   threshold: 0.86
+    #   scale: 10.0
+    #   once_per_episode: true
+  clip: null
+
+episode:
+  # REQUIRED for desktop control. No infinite keyboard sessions.
+  max_steps: 300
+  terminate_on: null
+  # Example visual game-over detector (create the template first):
+  # terminate_on:
+  #   type: template
+  #   template: assets/game_over.png
+  #   region: [280, 120, 240, 80]
+  #   threshold: 0.88
+  #   consecutive: 2
+
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 512
+  batch_size: 64
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  # Desktop control MUST stay at one environment.
+  n_envs: 1
+  checkpoint_freq: 5000
+  # Periodic evaluation would create a second adapter sending inputs to the
+  # same window, so it is disabled for desktop games.
+  eval_freq: 0
+  n_eval_episodes: 1
+  save_best: false
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

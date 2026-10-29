@@ -1,0 +1,95 @@
+# Harder Target Chase variant: the target respawns randomly and episodes end at
+# the time limit. The beam remains a visual hint, but the policy must react to a
+# new target position every collection. 50k steps is a starting experiment, not
+# a promise of strong deterministic play; use a longer run and evaluate often.
+version: 1
+description: "Randomized 5x5 Target Chase with a compass and a 60-step episode limit."
+
+game:
+  name: example_game_random
+  adapter: example_game
+  params:
+    grid_size: 5
+    cell_size: 64
+    n_obstacles: 2
+    max_steps: 60
+    fps: 20
+    show_compass: true
+  render_mode: null
+  seed: 42
+
+observation:
+  mode: grayscale
+  width: 84
+  height: 84
+  stack: 4
+  normalize: false
+
+actions:
+  frame_skip: 1
+  duration: 0.0
+  max_duration: 1.0
+  bindings:
+    - name: noop
+      params: {move: [0, 0]}
+    - name: left
+      params: {move: [-1, 0]}
+    - name: right
+      params: {move: [1, 0]}
+    - name: up
+      params: {move: [0, -1]}
+    - name: down
+      params: {move: [0, 1]}
+
+reward:
+  components:
+    - type: progress
+      key: distance
+      mode: decrease
+      reset_on: target_collected
+      scale: 1.0
+      name: closer
+    - type: signal
+      key: target_collected
+      scale: 10.0
+      name: target
+    - type: signal
+      key: wall_collision
+      scale: -0.1
+      name: wall_penalty
+    - type: constant
+      value: -0.01
+      name: time_penalty
+  clip: null
+
+episode:
+  max_steps: 60
+  terminate_on: null
+
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 256
+  batch_size: 128
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_envs: 4
+  checkpoint_freq: 10000
+  eval_freq: 2500
+  n_eval_episodes: 5
+  save_best: true
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

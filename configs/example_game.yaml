@@ -1,0 +1,109 @@
+# Target Chase: the built-in pixel game. This is the recommended first visual
+# training run because it needs no external game, window focus, or screen capture.
+#
+# This preset is a small fixed puzzle: start bottom-centre, reach the top-centre
+# target, and route around one obstacle. The yellow beam is drawn into the frame
+# as a visual affordance; the policy receives only 84x84 grayscale pixels. A
+# 50k run is enough to see this layout learned. It is not evidence that the same
+# policy generalizes to new levels; use example_game_random.yaml for that study.
+#
+# Reward shaping:
+#   * +1.0 for each step that reduces Manhattan distance to the target
+#   * +10 for reaching the target (the episode terminates successfully)
+#   * -0.1 for bumping a wall
+#   * -0.01 time penalty
+version: 1
+description: "Built-in Target Chase first puzzle: fixed 5x5 layout, pixel observations, PPO."
+
+game:
+  name: example_game
+  adapter: example_game
+  params:
+    grid_size: 5
+    cell_size: 64
+    n_obstacles: 1
+    max_steps: 30
+    fps: 20
+    show_compass: true
+    start: [2, 4]
+    target: [2, 0]
+    obstacles: [[2, 2]]
+    terminate_on_collect: true
+  render_mode: null
+  seed: 42
+
+observation:
+  mode: grayscale
+  width: 84
+  height: 84
+  stack: 4
+  normalize: false
+
+actions:
+  frame_skip: 1
+  duration: 0.0
+  max_duration: 1.0
+  bindings:
+    - name: noop
+      params: {move: [0, 0]}
+    - name: left
+      params: {move: [-1, 0]}
+    - name: right
+      params: {move: [1, 0]}
+    - name: up
+      params: {move: [0, -1]}
+    - name: down
+      params: {move: [0, 1]}
+
+reward:
+  components:
+    - type: progress
+      key: distance
+      mode: decrease
+      reset_on: target_collected
+      scale: 1.0
+      name: closer
+    - type: signal
+      key: target_collected
+      scale: 10.0
+      name: target
+    - type: signal
+      key: wall_collision
+      scale: -0.1
+      name: wall_penalty
+    - type: constant
+      value: -0.01
+      name: time_penalty
+  clip: null
+
+episode:
+  max_steps: 30
+  terminate_on: null
+
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 256
+  batch_size: 128
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_envs: 4
+  checkpoint_freq: 10000
+  eval_freq: 2500
+  n_eval_episodes: 5
+  save_best: true
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

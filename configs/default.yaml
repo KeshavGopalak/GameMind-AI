@@ -1,0 +1,132 @@
+# GameMind AI default configuration template.
+#
+# Copy this file, change game.name/adapter and the game.params block, and run:
+#   python scripts/train.py --config configs/my_game.yaml --timesteps 50000
+#
+# The default below trains the built-in Target Chase game, so you can run it
+# immediately as a sanity check before connecting an external game.
+version: 1
+description: "Default GameMind AI experiment (built-in Target Chase first puzzle)."
+
+game:
+  name: example_game
+  adapter: example_game
+  params:
+    grid_size: 5
+    cell_size: 64
+    n_obstacles: 1
+    max_steps: 30
+    fps: 20
+    # The yellow direction beam is drawn into the pixels, not passed as state.
+    show_compass: true
+    # Fixed layout for the first learnable puzzle. Remove start/target/obstacles
+    # for random placement (the harder example_game_random.yaml variant).
+    start: [2, 4]
+    target: [2, 0]
+    obstacles: [[2, 2]]
+    terminate_on_collect: true
+  # null for headless training. scripts/play.py explicitly opens a window.
+  render_mode: null
+  seed: 42
+
+observation:
+  # state: native environment observations (MlpPolicy)
+  # grayscale: resize pixels to one channel, recommended for frame stacking
+  # rgb: keep three channels, useful for colour-critical games
+  mode: grayscale
+  width: 84
+  height: 84
+  # 1 disables stacking. 4 frames is a common motion-aware default.
+  stack: 4
+  # Keep false for CnnPolicy: Stable-Baselines3 expects uint8 0..255 pixels.
+  normalize: false
+
+actions:
+  # Apply one chosen action for N game ticks. Use 1 for desktop games and use
+  # actions.duration to control how long keys are held.
+  frame_skip: 1
+  duration: 0.0
+  max_duration: 1.0
+  # For example_game, each binding must supply params.move: [dx, dy].
+  bindings:
+    - name: noop
+      params: {move: [0, 0]}
+    - name: left
+      params: {move: [-1, 0]}
+    - name: right
+      params: {move: [1, 0]}
+    - name: up
+      params: {move: [0, -1]}
+    - name: down
+      params: {move: [0, 1]}
+
+reward:
+  # Components are additive. See docs/training.md for the full reference.
+  components:
+    - type: progress
+      key: distance
+      mode: decrease
+      reset_on: target_collected
+      scale: 1.0
+      name: closer
+    - type: signal
+      key: target_collected
+      scale: 10.0
+      name: target
+    - type: signal
+      key: wall_collision
+      scale: -0.1
+      name: wall_penalty
+    - type: constant
+      value: -0.01
+      name: time_penalty
+  # Total reward clipping, null for no clipping. Example: [ -10, 10 ].
+  clip: null
+
+episode:
+  max_steps: 30
+  # Optional visual game-over detector:
+  # terminate_on:
+  #   type: template
+  #   template: assets/game_over.png
+  #   region: [250, 100, 300, 80]
+  #   threshold: 0.85
+  #   consecutive: 2
+  terminate_on: null
+
+training:
+  algorithm: ppo
+  # Additional timesteps for this invocation. 50k is a demonstration default,
+  # not a guarantee of mastery.
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  # At least 8. For PPO, batch_size must divide n_steps * n_envs.
+  n_steps: 256
+  batch_size: 128
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_envs: 4
+  # 0 disables periodic checkpoints. Otherwise save every N env steps.
+  checkpoint_freq: 10000
+  # 0 disables evaluation. Otherwise evaluate approximately every N env steps.
+  eval_freq: 2500
+  n_eval_episodes: 5
+  save_best: true
+  tensorboard: true
+  # auto, cpu, cuda, mps
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  # Subprocess vectorization can help Gymnasium environments but is not
+  # supported for desktop control and needs an if-main guard on Windows.
+  subproc: false
+  # Advanced constructor arguments, e.g. target_kl or use_sde.
+  extra_params: {}

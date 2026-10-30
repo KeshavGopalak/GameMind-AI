@@ -100,6 +100,8 @@ def main() -> int:
         lambda: _check_config("configs/example_game_random.yaml"),
     )
     check("parse configs/desktop_game.example.yaml", lambda: _check_config("configs/desktop_game.example.yaml"))
+    check("parse configs/geometry_dash.yaml", lambda: _check_config("configs/geometry_dash.yaml"))
+    check_optional("locate Geometry Dash window and capture one frame", _check_geometry_dash_capture)
 
     check("CartPole-v1 reset/step", _check_cartpole)
     check("LunarLander-v3 reset/step (Box2D)", _check_lunarlander)
@@ -204,6 +206,24 @@ def _check_example_game() -> str:
         return f"observation={observation.shape}, reward={reward:.3f}"
     finally:
         env.close()
+
+
+def _check_geometry_dash_capture() -> str:
+    """Read-only desktop check; never sends a key or mouse event."""
+    from gamemind.adapters.desktop_adapter import MSSCapture
+    from gamemind.adapters.geometry_dash import GeometryDashVision, PyAutoGUIWindowLocator
+
+    window = PyAutoGUIWindowLocator().find("Geometry Dash")
+    capture = MSSCapture(None, monitor=1)
+    try:
+        frame = capture.grab()
+    finally:
+        capture.close()
+    reading = GeometryDashVision().read(frame)
+    return (
+        f"window={window.width}x{window.height}, capture={frame.shape[1]}x{frame.shape[0]}, "
+        f"bar_found={reading.found}, progress~{reading.progress_pct:.1f}%"
+    )
 
 
 def _check_directories() -> str:

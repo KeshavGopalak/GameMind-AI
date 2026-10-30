@@ -166,10 +166,14 @@ class Trainer:
         control: TrainingControlCallback | None = None
         initial_timesteps = 0
         try:
-            if config.adapter.strip().lower() == "desktop" and training.eval_freq > 0:
+            if (
+                config.adapter.strip().lower() in {"desktop", "geometry_dash"}
+                and training.eval_freq > 0
+            ):
                 raise ConfigError(
-                    "Periodic evaluation is disabled for the desktop adapter because a second "
-                    "environment would send inputs to the same game window. Set training.eval_freq: 0."
+                    "Periodic evaluation is disabled for desktop-controlled adapters because a "
+                    "second environment would send inputs to the same game window. Set "
+                    "training.eval_freq: 0."
                 )
             train_env = build_vec_env(
                 config,

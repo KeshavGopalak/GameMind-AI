@@ -62,6 +62,14 @@ macOS desktop input:
   that runs GameMind.
 - The game window must be visible; some games ignore synthetic events unless they are frontmost.
 
+## Geometry Dash
+
+Geometry Dash is a Windows-focused desktop integration, not a headless game. Install
+`requirements.txt` (it includes `mss` and `pyautogui`), run Windows in a normal desktop session, and
+follow [geometry_dash.md](geometry_dash.md). GameMind must be allowed to send keyboard input and
+capture the screen. Keep the game focused and visible; Auto-Retry must be enabled in Geometry Dash.
+The setup check performs a read-only window/capture test when the game is running.
+
 ## LunarLander / Box2D
 
 `requirements.txt` installs `gymnasium[box2d]`. If Box2D fails to install on your platform, install
@@ -105,7 +113,8 @@ python scripts/test_setup.py
 
 The check performs real imports, parses every shipped config, resets and steps CartPole and
 LunarLander, renders a Pygame surface off-screen, builds the pixel game environment, tests write
-access to `models/`, `checkpoints/`, and `logs/`, and reports the PyTorch device. It does not send
+access to `models/`, `checkpoints/`, and `logs/`, and reports the PyTorch device. If Geometry Dash is
+running it also performs a **read-only** window lookup and one-frame capture check. It never sends
 desktop input.
 
 ## Common installation failures

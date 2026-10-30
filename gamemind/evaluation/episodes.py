@@ -28,6 +28,11 @@ class EpisodeResult:
     terminated: bool
     truncated: bool
     action_counts: dict[str, int] = field(default_factory=dict)
+    # Optional game metrics. Geometry Dash supplies approximate visual progress
+    # and survival time; other games leave these as None.
+    progress_pct: float | None = None
+    max_progress_pct: float | None = None
+    survival_seconds: float | None = None
 
 
 @dataclass
@@ -56,6 +61,16 @@ class EvaluationResult:
     def best_reward(self) -> float:
         return float(max((episode.reward for episode in self.episodes), default=0.0))
 
+    @property
+    def mean_progress_pct(self) -> float | None:
+        values = [episode.max_progress_pct for episode in self.episodes if episode.max_progress_pct is not None]
+        return float(np.mean(values)) if values else None
+
+    @property
+    def mean_survival_seconds(self) -> float | None:
+        values = [episode.survival_seconds for episode in self.episodes if episode.survival_seconds is not None]
+        return float(np.mean(values)) if values else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "game": self.game,
@@ -69,6 +84,8 @@ class EvaluationResult:
             "std_reward": self.std_reward,
             "mean_length": self.mean_length,
             "best_reward": self.best_reward,
+            "mean_progress_pct": self.mean_progress_pct,
+            "mean_survival_seconds": self.mean_survival_seconds,
             "user_closed": self.user_closed,
         }
 
@@ -141,6 +158,7 @@ def run_episodes(
             length = 0
             terminated = truncated = False
             action_counts: dict[str, int] = {}
+            last_info: dict[str, Any] = {}
             if render:
                 try:
                     env.render()
@@ -151,6 +169,7 @@ def run_episodes(
                     step_started = time.perf_counter()
                 action, _states = model.predict(observation, deterministic=deterministic)
                 observation, reward, terminated, truncated, info = env.step(action)
+                last_info = info if isinstance(info, dict) else {}
                 total_reward += float(reward)
                 length += 1
                 action_name = str(info.get("action_name", action))
@@ -170,6 +189,13 @@ def run_episodes(
                         remaining = (1.0 / playback_fps) - (time.perf_counter() - step_started)
                         if remaining > 0:
                             time.sleep(remaining)
+            def _metric(key: str) -> float | None:
+                value = last_info.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    number = float(value)
+                    return number if np.isfinite(number) else None
+                return None
+
             episode_result = EpisodeResult(
                 episode=episode_index,
                 reward=total_reward,
@@ -177,6 +203,9 @@ def run_episodes(
                 terminated=bool(terminated),
                 truncated=bool(truncated),
                 action_counts=action_counts,
+                progress_pct=_metric("progress_pct"),
+                max_progress_pct=_metric("max_progress_pct"),
+                survival_seconds=_metric("survival_seconds"),
             )
             result.episodes.append(episode_result)
             logger.info(
@@ -188,6 +217,12 @@ def run_episodes(
                 terminated,
                 truncated,
             )
+            if episode_result.max_progress_pct is not None:
+                logger.info(
+                    "  visual progress: %.2f%% (max); survival: %.2fs",
+                    episode_result.max_progress_pct,
+                    episode_result.survival_seconds or 0.0,
+                )
             if result.user_closed:
                 break
         logger.info(

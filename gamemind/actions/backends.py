@@ -82,24 +82,49 @@ class PyAutoGUIBackend:
                 f"No window containing {window_title!r} was found. Start the game first or "
                 "clear game.params.window_title."
             )
-        window = windows[0]
+        wanted = window_title.strip().lower()
+        exact = [
+            window
+            for window in windows
+            if str(getattr(window, "title", "")).strip().lower() == wanted
+        ]
+        # A game may also publish a small helper window whose title contains the
+        # same text. Prefer an exact title, then the largest window.
+        window = max(
+            exact or windows,
+            key=lambda item: int(getattr(item, "width", 0)) * int(getattr(item, "height", 0)),
+        )
         try:
-            if getattr(window, "isMinimized", False):
-                window.restore()
-            window.activate()
-            self._pyautogui.sleep(0.15)
-            active = self._pyautogui.getActiveWindow()
-        except Exception as exc:
-            raise InputBackendError(
-                f"Could not focus window {window_title!r}: {exc}. "
-                "Focus the game manually or disable require_window_focus."
-            ) from exc
-        active_title = getattr(active, "title", "") or ""
-        if window_title.lower() not in active_title.lower():
-            raise InputBackendError(
-                f"Game window focus was lost (active window: {active_title!r}). "
-                "GameMind refuses to send inputs to an unknown window."
-            )
+            active_title = str(getattr(self._pyautogui.getActiveWindow(), "title", "") or "")
+        except Exception:
+            active_title = ""
+        if wanted in active_title.lower() and not getattr(window, "isMinimized", False):
+            # Focus is already correct. Avoid the expensive activate/sleep path
+            # on every action; this matters for fast desktop games.
+            return
+        last_title = active_title
+        for attempt in range(3):
+            try:
+                if getattr(window, "isMinimized", False):
+                    window.restore()
+                window.activate()
+                self._pyautogui.sleep(0.15 if attempt == 0 else 0.25)
+                active = self._pyautogui.getActiveWindow()
+            except Exception as exc:
+                raise InputBackendError(
+                    f"Could not focus window {window_title!r}: {exc}. "
+                    "Focus the game manually or disable require_window_focus."
+                ) from exc
+            last_title = str(getattr(active, "title", "") or "")
+            if wanted in last_title.lower():
+                return
+            # Windows can briefly show the Alt+Tab "Task Switching" surface or
+            # another transient foreground window. Retry before refusing input;
+            # this also gives the user a moment to return focus to the game.
+        raise InputBackendError(
+            f"Game window focus was lost (active window: {last_title!r}). "
+            "GameMind refuses to send inputs to an unknown window."
+        )
 
     def key_down(self, key: str) -> None:
         key = key.lower()

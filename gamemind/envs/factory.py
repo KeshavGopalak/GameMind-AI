@@ -83,10 +83,10 @@ def build_vec_env(
     """
     if n_envs < 1:
         raise ConfigError("n_envs must be at least 1.")
-    if config.adapter.strip().lower() == "desktop" and n_envs > 1:
+    if config.adapter.strip().lower() in {"desktop", "geometry_dash"} and n_envs > 1:
         raise ConfigError(
-            "The desktop adapter must use n_envs: 1. Multiple copies would control the "
-            "same window simultaneously. Reduce training.n_envs or the --n-envs override."
+            "Desktop-controlled adapters must use n_envs: 1. Multiple copies would control "
+            "the same window simultaneously. Reduce training.n_envs or the --n-envs override."
         )
     if render_mode == "human" and n_envs > 1:
         raise ConfigError("Human rendering requires n_envs=1.")
@@ -96,7 +96,7 @@ def build_vec_env(
     thunks = [make_env_thunk(config, render_mode=render_mode, rank=index) for index in range(n_envs)]
     try:
         if subproc and n_envs > 1:
-            if config.adapter.strip().lower() == "desktop":
+            if config.adapter.strip().lower() in {"desktop", "geometry_dash"}:
                 raise ConfigError("Subprocess vectorization is not supported for desktop input.")
             vec_env = SubprocVecEnv(thunks, start_method="spawn")
         else:

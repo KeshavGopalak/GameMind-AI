@@ -23,6 +23,17 @@ logger = get_logger("callbacks")
 class TrainingControlCallback(BaseCallback):
     """Track metrics, write a live status file, and honor PAUSE/STOP files."""
 
+    # Optional adapter signals worth keeping in episode logs. They are absent
+    # for games that do not provide them and never change the training signal.
+    TRACKED_INFO_METRICS = (
+        "progress_pct",
+        "max_progress_pct",
+        "survival_seconds",
+        "died",
+        "completed",
+        "gameplay_lost",
+    )
+
     def __init__(
         self,
         *,
@@ -55,6 +66,7 @@ class TrainingControlCallback(BaseCallback):
         self._episode_count = 0
         self._last_episode_reward: float | None = None
         self._best_episode_reward: float | None = None
+        self._latest_metrics: dict[str, float] = {}
         self._started = time.monotonic()
         self._last_status_write = 0.0
         self._last_control_check = 0.0
@@ -99,6 +111,15 @@ class TrainingControlCallback(BaseCallback):
         for info in infos:
             if not isinstance(info, dict):
                 continue
+            for key in self.TRACKED_INFO_METRICS:
+                value = info.get(key)
+                if isinstance(value, bool):
+                    self._latest_metrics[key] = 1.0 if value else 0.0
+                    continue
+                if isinstance(value, (int, float, np.integer, np.floating)):
+                    number = float(value)
+                    if np.isfinite(number):
+                        self._latest_metrics[key] = number
             episode = info.get("episode")
             if not isinstance(episode, dict):
                 continue
@@ -113,22 +134,23 @@ class TrainingControlCallback(BaseCallback):
             self._last_episode_reward = reward
             if self._best_episode_reward is None or reward > self._best_episode_reward:
                 self._best_episode_reward = reward
-            append_jsonl(
-                self.episodes_path,
-                {
-                    "episode": self._episode_count,
-                    "reward": reward,
-                    "length": length,
-                    "timesteps": int(self.model.num_timesteps),
-                    "timestamp": utc_now_iso(),
-                },
-            )
+            record: dict[str, Any] = {
+                "episode": self._episode_count,
+                "reward": reward,
+                "length": length,
+                "timesteps": int(self.model.num_timesteps),
+                "timestamp": utc_now_iso(),
+            }
+            for key in self.TRACKED_INFO_METRICS:
+                if key in self._latest_metrics:
+                    record[key] = round(self._latest_metrics[key], 4)
+            append_jsonl(self.episodes_path, record)
 
     def metrics(self) -> dict[str, Any]:
         elapsed = max(1e-9, time.monotonic() - self._started)
         steps_done = max(0, int(self.model.num_timesteps) - self.initial_timesteps)
         progress = min(1.0, steps_done / self.additional_timesteps)
-        return {
+        status_metrics: dict[str, Any] = {
             "timesteps": int(self.model.num_timesteps),
             "initial_timesteps": self.initial_timesteps,
             "steps_this_run": steps_done,
@@ -141,6 +163,9 @@ class TrainingControlCallback(BaseCallback):
             "best_episode_reward": self._best_episode_reward,
             "fps": steps_done / elapsed if steps_done else 0.0,
         }
+        for key, value in self._latest_metrics.items():
+            status_metrics[key] = round(value, 4)
+        return status_metrics
 
     def _write_status(self, *, force: bool = False) -> None:
         now = time.monotonic()

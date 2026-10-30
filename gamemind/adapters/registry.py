@@ -45,12 +45,19 @@ def _desktop_factory(config: GameConfig, render_mode: str | None) -> GameAdapter
     return DesktopGameAdapter(config, render_mode=render_mode)
 
 
+def _geometry_dash_factory(config: GameConfig, render_mode: str | None) -> GameAdapter:
+    from gamemind.adapters.geometry_dash import GeometryDashAdapter
+
+    return GeometryDashAdapter(config, render_mode=render_mode)
+
+
 def _register_builtins() -> None:
     if _FACTORIES:
         return
     _FACTORIES["gymnasium"] = _gymnasium_factory
     _FACTORIES["example_game"] = _example_factory
     _FACTORIES["desktop"] = _desktop_factory
+    _FACTORIES["geometry_dash"] = _geometry_dash_factory
 
 
 def available_adapters() -> list[str]:

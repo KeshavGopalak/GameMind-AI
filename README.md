@@ -13,8 +13,9 @@ the same when you add a new game.
 
 ## What works now
 
-- **One adapter interface**, implemented by a Gymnasium adapter, a built-in pixel game, and a
-  configurable desktop keyboard/mouse adapter.
+- **One adapter interface**, implemented by a Gymnasium adapter, a built-in pixel game, a
+  configurable desktop keyboard/mouse adapter, and a specialised **Geometry Dash** adapter with
+  visual progress/death detection.
 - **Pixel observations**: RGB or grayscale, configurable resolution, optional crop, frame stacking,
   optional normalization, frame skipping, and strict shape/dtype/range validation.
 - **Actions**: discrete bindings with keyboard combinations, mouse click/relative movement, a no-op,
@@ -71,6 +72,24 @@ Other ready-to-run configurations:
 python scripts/train.py --game cartpole --timesteps 50000
 python scripts/train.py --game lunarlander --timesteps 50000
 ```
+
+### Geometry Dash (real desktop game)
+
+Geometry Dash is supported as an experimental **desktop** integration. It captures the real game
+window, sends Space/Enter, and estimates progress from the visible white progress bar. It does not
+read game memory or internal state. Before running, open Geometry Dash, select a level, enable
+Auto-Retry, and use fullscreen/borderless on the primary monitor. Full setup, calibration, and
+limitations are in [docs/geometry_dash.md](docs/geometry_dash.md).
+
+```bat
+python scripts/train.py --config configs/geometry_dash.yaml --timesteps 50000
+python scripts/play.py --config configs/geometry_dash.yaml --model models/geometry_dash.zip --episodes 3
+python scripts/evaluate.py --config configs/geometry_dash.yaml --model models/geometry_dash.zip --episodes 20
+```
+
+This is Windows-focused and requires the game to remain focused/visible. It is not a promise that
+50,000 steps will beat a level; measure survival time and maximum progress before drawing
+conclusions.
 
 Launch the dashboard:
 
@@ -187,9 +206,10 @@ GameMind-AI/
 │   ├── lunarlander.yaml
 │   ├── example_game.yaml
 │   ├── example_game_random.yaml
+│   ├── geometry_dash.yaml
 │   └── desktop_game.example.yaml
 ├── gamemind/
-│   ├── adapters/        base contract, Gymnasium, example game, desktop, registry
+│   ├── adapters/        base contract, Gymnasium, example game, desktop, Geometry Dash, registry
 │   ├── observations/    pixel processor and Gymnasium wrappers
 │   ├── actions/         discrete binding helpers and PyAutoGUI input backend
 │   ├── rewards/         reward components, custom functions, template termination
@@ -201,11 +221,11 @@ GameMind-AI/
 ├── games/example_game/  Target Chase game and renderer
 ├── scripts/             train.py, play.py, evaluate.py, test_setup.py
 ├── dashboard/app.py     minimal Streamlit control panel
-├── tests/               pytest suite
+├── tests/               pytest suite, including Geometry Dash fake-backend tests
 ├── models/              generated models (Git-ignored)
 ├── checkpoints/         generated checkpoints (Git-ignored)
 ├── logs/                status, metrics, TensorBoard, monitor logs (Git-ignored)
-└── docs/                installation, training, connecting games, troubleshooting
+└── docs/                installation, training, connecting games, Geometry Dash, troubleshooting
 ```
 
 ## Ready-made games
@@ -216,6 +236,7 @@ GameMind-AI/
 | `lunarlander` | native eight-value state | Yes after Box2D installs | Harder; 50k is a starting point, not mastery. |
 | `example_game` | 4 stacked grayscale 84×84 frames | Yes | Fixed 5×5 Target Chase starting puzzle: one obstacle, one target, terminal success. The included 50k run learned this layout; see the measured result below. |
 | `example_game_random` | 4 stacked grayscale 84×84 frames | Yes, but harder | Random target placement, respawning targets, 60-step limit. Treat 50k as a starting experiment and evaluate deterministic play before claiming skill. |
+| `geometry_dash` | 4 stacked grayscale 84×84 frames from the real game | **Requires setup** | Windows, Geometry Dash, Auto-Retry, fullscreen/borderless, focus. Progress is an approximate bar reading; see [docs/geometry_dash.md](docs/geometry_dash.md). |
 | `desktop_game.example` | captured pixels | **No, needs editing** | Real keyboard/mouse control. You must set the window title, capture region, reset keys, rewards, and possibly a game-over detector. |
 
 ### The built-in Target Chase game
@@ -364,8 +385,8 @@ python scripts/evaluate.py --game example_game --model models/example_game.zip -
 `play.py` uses deterministic actions by default, recreates the environment from the model metadata,
 and never trains. Close the game window, press Escape, or press Ctrl+C to stop cleanly. Use
 `--stochastic` to sample actions, `--fps 0` for unpaced playback, or `--no-render` for a headless
-run. For desktop games, the real game window is also visible; the adapter can additionally display
-captured frames.
+run. For generic desktop games, the adapter can additionally display captured frames. The Geometry
+Dash adapter intentionally does not open that duplicate viewer: watch the real game window instead.
 
 ## Connect another game
 
@@ -396,7 +417,8 @@ compatibility: some games need a custom observation, reward, or termination sour
 ## Supported systems and integration methods
 
 - **Tested:** Windows 11, Python 3.13.14, CPU PyTorch; CartPole, LunarLander (Box2D), Target Chase,
-  and the desktop adapter logic (with fake capture/input backends in tests).
+  the desktop adapter logic (fake backends in tests), and a live Geometry Dash adapter/PPO/playback
+  smoke test.
 - **Expected:** Python 3.11–3.13 on macOS/Linux for Gymnasium and the built-in game. Live Pygame
   playback needs an SDL display. Desktop capture (mss) and input (PyAutoGUI) depend on the OS:
   macOS requires Accessibility/Screen Recording permissions; Linux needs an X11-compatible session
@@ -412,10 +434,17 @@ python -m pytest -q
 python scripts/test_setup.py
 ```
 
+Current checkout: **73 tests passed** and **28 setup checks passed**. On a machine with Geometry Dash
+running, `test_setup.py` also performs a read-only window lookup and one-frame capture check.
+
 The test suite covers config parsing/validation, observation shapes/dtypes/bounds, wrappers, action
 bindings, reward components and template termination, the custom game's Gymnasium API compliance,
 desktop adapter input cleanup/focus/template termination with fake backends, a real small PPO
 training run, checkpoint metadata, model/environment compatibility, evaluation, and resume training.
+Geometry Dash tests cover window lookup, bar reading/calibration, death/reset, completion, jump
+release, and a fake-backend PPO smoke run. The live smoke run also exercised a real window,
+real screenshots, real keys, model saving, evaluation, and playback; details are in
+[docs/geometry_dash.md](docs/geometry_dash.md).
 The verification details and environment-specific limitations are recorded in
 [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -429,6 +458,10 @@ The verification details and environment-specific limitations are recorded in
   termination.
 - Desktop training is restricted to `n_envs: 1` and periodic evaluation is disabled, because both
   would control the same window.
+- Geometry Dash progress is estimated from the progress bar's coloured fill, not OCR or game memory.
+  It can be off by a percentage point or two and depends on the bar remaining visible and unstyled
+  differently by a mod. Auto-Retry is required for the current death detector. See
+  [docs/geometry_dash.md](docs/geometry_dash.md).
 - Template matching is sensitive to resolution/UI changes. It is not OCR or general vision.
 - The built-in policies support Box and Dict observation spaces and Discrete/Box action spaces.
   Custom policies/feature extractors can be passed through `training.extra_params.policy_kwargs`;

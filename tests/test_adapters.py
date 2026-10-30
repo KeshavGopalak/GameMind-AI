@@ -17,7 +17,9 @@ from tests.support import FakeCapture, FakeInput, make_desktop_config
 
 
 def test_builtin_adapters_are_registered():
-    assert {"gymnasium", "example_game", "desktop"}.issubset(set(available_adapters()))
+    assert {"gymnasium", "example_game", "desktop", "geometry_dash"}.issubset(
+        set(available_adapters())
+    )
 
 
 def test_example_game_wrapped_spaces_and_determinism(example_config):

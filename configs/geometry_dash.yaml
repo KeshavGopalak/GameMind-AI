@@ -1,0 +1,189 @@
+# Geometry Dash — real game, real screen pixels, real keyboard input.
+#
+# BEFORE RUNNING:
+#   1. Launch Geometry Dash and open a level you want to train on.
+#   2. Use fullscreen/borderless mode on the primary monitor. The default
+#      capture region below is the whole primary monitor.
+#   3. Enable Auto-Retry in Geometry Dash's settings. The adapter uses the
+#      progress bar resetting to ~0% as its death/attempt signal.
+#   4. Close windows that may cover the game. GameMind focuses "Geometry Dash"
+#      before every input but cannot hide another app that is drawn on top.
+#   5. Keep the game focused. Press Ctrl+C or move the mouse to a screen corner
+#      (PyAutoGUI failsafe) to stop.
+#
+# This adapter does not read game memory, level coordinates, or collision data.
+# It watches the white outlined progress bar at the top of the screen and
+# estimates progress from the coloured fill. That estimate is approximate
+# (roughly ±1%), not OCR. See docs/geometry_dash.md.
+#
+# 50,000 timesteps is a starting experiment, not a promise that the agent will
+# beat the level. It is enough to smoke-test learning; real improvement usually
+# needs longer training and reward tuning.
+version: 1
+description: "Geometry Dash: real desktop window, pixel PPO, jump control, progress-bar reward."
+
+game:
+  name: geometry_dash
+  adapter: geometry_dash
+  params:
+    # null captures the selected monitor. Set [x, y, width, height] to crop to
+    # a window/region; progress coordinates are then relative to that crop.
+    region: null
+    monitor: 1
+    window_title: "Geometry Dash"
+    # Required by this adapter: never send Enter/Space to an unknown app.
+    require_window_focus: true
+    # Seconds before the first input. Gives you time to focus the game.
+    start_delay: 3.0
+    # Enter restarts the current attempt/start screen. Space resumes a paused
+    # game if reset cannot find the progress bar.
+    reset_keys: ["enter"]
+    resume_keys: ["space"]
+    reset_delay: 0.35
+    reset_key_duration: 0.04
+    reset_timeout: 5.0
+    reset_poll_interval: 0.04
+    fps: 30
+
+    # Progress-bar detection. null = find the long white outlined bar near the
+    # top of the frame automatically. For a scaled HUD, set the bar's bounding
+    # box in captured pixels, e.g. [608, 12, 703, 30] for 1920x1080.
+    progress_region: null
+    bar_search_top_fraction: 0.09
+    bar_white_threshold: 200
+    bar_min_width_fraction: 0.15
+    bar_max_height_fraction: 0.08
+    bar_min_aspect: 5.0
+    bar_min_area_fraction: 0.0005
+    bar_left_inset: 8
+    bar_right_inset: 8
+    bar_min_fill_columns: 4
+    # The fill normally uses the player's colour, which may be blue/orange/green.
+    # At reset the adapter learns the empty bar's colour and detects the fill by
+    # contrast. Increase this if background noise is mistaken for fill, or lower
+    # it if a dark fill is missed.
+    fill_color_distance: 30
+    # Fallback when no empty-bar calibration is available. OpenCV HSV.
+    progress_fill_hsv_low: [8, 90, 90]
+    progress_fill_hsv_high: [45, 255, 255]
+
+    # A death is a progress drop from at least death_min_progress to at most
+    # reset_progress_max. Keep a gap between them so small bar jitter is not a
+    # death. The game's Auto-Retry must be enabled.
+    death_min_progress: 0.8
+    reset_progress_max: 0.4
+    completion_pct: 99.0
+    completion_frames: 2
+    # If the bar disappears for this many consecutive captures (pause/menu/
+    # focus loss), end the episode so reset can recover instead of spinning.
+    lost_gameplay_frames: 20
+    start_progress_threshold: 5.0
+
+  render_mode: null
+  seed: 42
+
+observation:
+  # Pixels only. The policy never receives GameMind's internal progress signal.
+  mode: grayscale
+  width: 84
+  height: 84
+  stack: 4
+  normalize: false
+  # Remove the top 4% (progress bar) from the policy view. The detector still
+  # reads the raw, uncropped screenshot.
+  crop: [0.04, 0.0, 0.0, 0.0]
+
+actions:
+  # One environment action per captured frame. Raise frame_skip to 2-4 to make
+  # decisions less often if input latency is high; each skipped frame repeats
+  # the current action.
+  frame_skip: 1
+  duration: 0.02
+  max_duration: 0.3
+  bindings:
+    - name: noop
+      keys: []
+    - name: jump
+      keys: ["space"]
+      duration: 0.03
+    - name: hold_jump
+      keys: ["space"]
+      duration: 0.12
+    # All actions release held keys in a finally block. This explicit release
+    # action is a panic/unstick action and is mostly redundant, but remains
+    # available so keyboard-hold experiments can release the jump button.
+    - name: release_jump
+      keys: []
+      duration: 0.0
+    # Optional mouse-click jump. Uncomment if your setup needs it. The click is
+    # sent only while the Geometry Dash window is focused.
+    # - name: jump_mouse
+    #   mouse_click: ["left"]
+    #   duration: 0.03
+
+reward:
+  components:
+    # Small reward for staying alive; a longer attempt is better than an
+    # immediate death.
+    - type: survival
+      key: alive
+      value: 0.02
+      name: survive
+    # +1 per percentage point of estimated progress. The visual detector's
+    # value is approximate, so keep this moderate.
+    - type: progress
+      key: progress_pct
+      scale: 1.0
+      reset_on: died
+      name: level_progress
+    - type: signal
+      key: died
+      scale: -5.0
+      name: death_penalty
+    - type: signal
+      key: completed
+      scale: 50.0
+      name: level_complete
+    - type: signal
+      key: gameplay_lost
+      scale: -1.0
+      name: lost_gameplay
+    - type: constant
+      value: -0.01
+      name: time_penalty
+  clip: [-20.0, 60.0]
+
+episode:
+  # ~20 captures/second is typical. 900 steps is a safety limit, not a target.
+  max_steps: 900
+  terminate_on: null
+
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 256
+  batch_size: 64
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  # Only one process can safely press keys in one game window.
+  n_envs: 1
+  checkpoint_freq: 5000
+  # Evaluation would create a second adapter controlling the same window.
+  eval_freq: 0
+  n_eval_episodes: 1
+  save_best: false
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

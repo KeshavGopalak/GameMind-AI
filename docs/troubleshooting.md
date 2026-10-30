@@ -5,11 +5,12 @@
 Environment: **Windows 11 (build 26200)**, **Python 3.13.14**, CPU PyTorch **2.15.0+cpu**,
 Gymnasium **1.4.0**, Stable-Baselines3 **2.9.2**, OpenCV **5.0.0**, pygame **2.6.1**.
 
-- `python scripts/test_setup.py`: all checks passed (see the final project report for the count at
-  release time).
-- `python -m pytest -q`: the complete local test suite passed. The suite includes a real PPO training
-  run, checkpoint metadata, resume, headless evaluation, adapter API checks, reward/observation tests,
-  desktop adapter tests with fake capture/input backends, and template detection.
+- `python scripts/test_setup.py`: **28 passed, 0 warnings, 0 failed** after adding the optional live
+  Geometry Dash window/capture check.
+- `python -m pytest -q`: **73 passed** (7.45s). The suite includes real PPO training smoke tests,
+  checkpoint metadata, resume, headless evaluation, adapter API checks, reward/observation tests,
+  desktop adapter tests with fake capture/input backends, template detection, and the Geometry Dash
+  suite with fake backends.
 - A 50,176-step fixed-layout Target Chase run (`demo_fixed_50k`) completed. Deterministic
   evaluation over 20 episodes reached the target in 20/20 episodes, with mean reward 13.94 and mean
   length 6.0. This is a fixed-layout training puzzle, not a generalization claim. Training is
@@ -17,15 +18,21 @@ Gymnasium **1.4.0**, Stable-Baselines3 **2.9.2**, OpenCV **5.0.0**, pygame **2.6
 - A 50,176-step randomized Target Chase experiment and a 51,200-step CartPole run were also executed;
   CartPole reached the 500-step time limit, while the randomized pixel run remained weak under
   deterministic evaluation. The CLI and dashboard paths were exercised in both cases.
-- The automated test environment uses `SDL_VIDEODRIVER=dummy`. A real interactive window was not
-  visually verified by an automated headless test; the Pygame and captured-frame paths are exercised
-  without a display. You must verify a live window on your desktop.
+- Geometry Dash was exercised live on this Windows machine: real window lookup, 1920×1080 desktop
+  capture, blue and orange progress fills, Enter reset, death detection, a 256-step PPO smoke run
+  (real keys), model save, headless evaluation, and playback. The 256-step run's best episode reached
+  23.58% estimated progress / 5.28s survival; deterministic evaluation of that smoke model reached
+  1.46% / 1.89s. These are smoke-test numbers, not a skill claim; see
+  [geometry_dash.md](geometry_dash.md) for details and limitations.
+- The automated test environment uses `SDL_VIDEODRIVER=dummy`. A real interactive Pygame window was
+  not visually verified by an automated headless test; the Pygame and captured-frame paths are
+  exercised without a display. You must verify a live window on your desktop.
 
 Not verified in this checkout:
 
 - Linux and macOS live displays, desktop permissions, and PyAutoGUI behavior.
-- A real third-party desktop game (the desktop adapter is tested with fake capture/input backends and
-  template frames, not by controlling an actual game).
+- Geometry Dash with other levels, mods, UI scales, or a non-primary monitor. The progress bar colour
+  and geometry can differ; calibrate `progress_region`/HSV values if needed.
 - CUDA/MPS performance (CPU was used).
 - MaskablePPO (`sb3-contrib` is optional and was not installed for the test run).
 - Box2D/LunarLander training quality beyond environment creation; LunarLander is supported but
@@ -61,6 +68,34 @@ build tools.
 - On Linux, use an X11 session. Wayland screen capture/input may not work.
 - On a headless server, run `evaluate.py` (headless by default) or `play.py --no-render`, and do not attempt desktop control.
 - The tests set `SDL_VIDEODRIVER=dummy` deliberately.
+
+### Geometry Dash: window not found or focus lost
+
+- The adapter looks for a visible window whose title contains `Geometry Dash`. Start the game first;
+  do not leave it minimized in the tray.
+- It refuses to send input unless `require_window_focus: true` and the game is the active window. This
+  is deliberate: Enter and Space can activate other applications.
+- A transient Windows **Task Switching** window is retried a few times. If focus cannot be recovered,
+  training stops rather than sending keys to an unknown window. Click the game and rerun.
+- Close or move Discord/Steam/browser overlays. GameMind can focus the game but cannot remove another
+  window drawn on top of it.
+- Use fullscreen/borderless on the primary monitor, or set `region` to the game's physical pixel
+  rectangle. Display scaling can make a logical window rectangle differ from `mss` pixels.
+
+### Geometry Dash: "Could not confirm a playable ... level after reset"
+
+- Open a level and start an attempt manually before training. The adapter does not navigate the full
+  menu system.
+- Enable Auto-Retry in the game. The death detector uses the progress bar returning to ~0%.
+- If the game is paused, the adapter tries the configured `resume_keys` (Space) and then `reset_keys`
+  (Enter). A paused attempt in the middle of a level may need a manual restart before training.
+- Check `progress_region`. Auto-detection expects the long white bar near the top of the captured
+  frame. A scaled/moved HUD can be configured explicitly, e.g. `[608, 12, 703, 30]` for 1920×1080.
+- If the bar is detected but progress stays at 0, the fill colour is not matching. The adapter learns
+  the empty bar colour at reset and detects contrast; increase/decrease `fill_color_distance`, or set
+  `progress_fill_hsv_low`/`progress_fill_hsv_high` as a fallback for your level.
+- If the bar disappears, the episode ends as `gameplay_lost` after `lost_gameplay_frames`; reset then
+  tries to recover. Frequent `gameplay_lost` usually means a menu, pause, focus loss, or overlay.
 
 ### PyAutoGUI errors or the desktop adapter refuses to start
 
@@ -175,8 +210,9 @@ matching config. Resume also validates the algorithm.
 
 - `play.py` uses a human rendering mode; a display is required.
 - On a server, use `evaluate.py` (headless by default) or `play.py --no-render` instead.
-- For the example game, close the Pygame window or press Escape; for desktop games, the real game
-  window and GameMind's capture viewer may both be present.
+- For the example game, close the Pygame window or press Escape; for generic desktop games, the real
+  game window and GameMind's capture viewer may both be present. Geometry Dash intentionally uses
+  only the real game window, not a duplicate capture viewer.
 - The model may be playing, but the game itself may not be focused; the desktop adapter's focus rule
   still applies.
 
@@ -228,6 +264,7 @@ after episodes complete, not after every training step.
 ## Where to look next
 
 - [training.md](training.md) for every config field and reward component.
+- [geometry_dash.md](geometry_dash.md) for the Geometry Dash setup, visual signals, and commands.
 - [connecting_games.md](connecting_games.md) for adapter and capture design.
 - [installation.md](installation.md) for dependency and display setup.
 - `logs/runs/<run-id>/status.json`, `train.log`, `episodes.jsonl`, and `monitor.csv` for the actual

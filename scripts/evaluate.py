@@ -77,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Episodes: {len(result.episodes)}")
         print(f"Mean reward: {result.mean_reward:.3f} ± {result.std_reward:.3f}")
         print(f"Mean length: {result.mean_length:.1f}")
+        if result.mean_progress_pct is not None:
+            print(f"Mean max progress: {result.mean_progress_pct:.2f}% (from pixels)")
+        if result.mean_survival_seconds is not None:
+            print(f"Mean survival: {result.mean_survival_seconds:.2f}s")
         print(f"Best reward: {result.best_reward:.3f}")
         print("=" * 70)
         return 0

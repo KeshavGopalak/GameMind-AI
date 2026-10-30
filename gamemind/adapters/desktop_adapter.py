@@ -109,6 +109,12 @@ class DesktopGameAdapter(GameAdapter):
     """Control an arbitrary desktop game through keyboard/mouse and screenshots."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+    # Specialised desktop adapters can add validated configuration keys without
+    # weakening the strict template used by the generic adapter.
+    extra_param_names: frozenset[str] = frozenset()
+    # A real game window is usually visible already. Adapters that control a
+    # real desktop game can disable the duplicate OpenCV preview window.
+    show_capture_viewer: bool = True
 
     def __init__(
         self,
@@ -135,7 +141,7 @@ class DesktopGameAdapter(GameAdapter):
             "reset_delay",
             "reset_key_duration",
             "fps",
-        }
+        } | set(self.extra_param_names)
         unknown = sorted(set(params) - allowed)
         if unknown:
             raise ConfigError(
@@ -228,7 +234,7 @@ class DesktopGameAdapter(GameAdapter):
                     dtype=np.uint8,
                 )
             )
-            if self.render_mode == "human":
+            if self.render_mode == "human" and self.show_capture_viewer:
                 self._viewer = FrameViewer(
                     title=f"GameMind AI — {self.config.name}", fps=self.fps
                 )

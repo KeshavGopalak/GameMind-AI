@@ -26,9 +26,10 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 import streamlit as st
+import yaml
 
 from gamemind.algorithms.factory import maskable_ppo_available
-from gamemind.config import load_game_config
+from gamemind.config import GameConfig, load_game_config
 from gamemind.training.model_io import metadata_path_for
 from gamemind.utils.serialization import atomic_write_json, read_json, read_jsonl
 from gamemind.utils.paths import DEFAULT_LOG_DIR, DEFAULT_MODEL_DIR, safe_name
@@ -107,6 +108,41 @@ def _model_label(path: Path) -> str:
     return f"{path.relative_to(ROOT)} — no metadata"
 
 
+def _write_geometry_config(
+    config: GameConfig,
+    run_name: str,
+    *,
+    jump_key: str | None,
+    jump_tap: float | None,
+    jump_hold: float | None,
+) -> Path:
+    """Persist the dashboard's Geometry Dash control edits for the subprocess."""
+    if config.adapter != "geometry_dash":
+        raise ValueError("Geometry Dash overrides were requested for another adapter.")
+    if jump_key is None or not jump_key.strip():
+        raise ValueError("Jump key must not be empty.")
+    if jump_tap is None or jump_hold is None or jump_tap < 0.0 or jump_hold < 0.0:
+        raise ValueError("Jump durations must be zero or positive.")
+    bindings = []
+    for binding in config.actions.bindings:
+        if binding.name == "jump":
+            binding = replace(binding, keys=(jump_key.strip().lower(),), duration=float(jump_tap))
+        elif binding.name == "hold_jump":
+            binding = replace(binding, keys=(jump_key.strip().lower(),), duration=float(jump_hold))
+        bindings.append(binding)
+    if not any(binding.name in {"jump", "hold_jump"} for binding in bindings):
+        raise ValueError("Geometry Dash config has no jump or hold_jump action binding.")
+    edited = replace(
+        config,
+        actions=replace(config.actions, bindings=tuple(bindings)),
+    )
+    directory = DASHBOARD_LOG_DIR / "configs"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{run_name}.yaml"
+    path.write_text(yaml.safe_dump(edited.as_dict(), sort_keys=False), encoding="utf-8")
+    return path
+
+
 def _launch_training(
     config_path: Path,
     *,
@@ -124,6 +160,9 @@ def _launch_training(
     normalize: bool,
     resume_from: str | None,
     no_tensorboard: bool,
+    jump_key: str | None = None,
+    jump_tap: float | None = None,
+    jump_hold: float | None = None,
 ) -> tuple[dict[str, Any], str]:
     config = load_game_config(config_path)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -132,12 +171,21 @@ def _launch_training(
     dashboard_log = DASHBOARD_LOG_DIR / f"{run_name}.log"
     DASHBOARD_LOG_DIR.mkdir(parents=True, exist_ok=True)
     output = DEFAULT_MODEL_DIR / "dashboard" / f"{run_name}.zip"
+    effective_config = config_path
+    if config.adapter == "geometry_dash":
+        effective_config = _write_geometry_config(
+            config,
+            run_name,
+            jump_key=jump_key,
+            jump_tap=jump_tap,
+            jump_hold=jump_hold,
+        )
     cmd = [
         sys.executable,
         "-u",
         str(ROOT / "scripts" / "train.py"),
         "--config",
-        str(config_path),
+        str(effective_config),
         "--timesteps",
         str(timesteps),
         "--algorithm",
@@ -189,6 +237,7 @@ def _launch_training(
         "dashboard_log": str(dashboard_log),
         "output": str(output),
         "config_path": str(config_path),
+        "effective_config_path": str(effective_config),
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "command": " ".join(cmd),
     }
@@ -273,11 +322,35 @@ def main() -> None:
             st.error(f"Could not load config: {exc}")
             return
         st.caption(f"Adapter: `{config.adapter}` · Game: `{config.name}`")
+        is_desktop_control = config.adapter in {"desktop", "geometry_dash"}
         if config.adapter == "desktop":
             st.warning(
                 "This is the desktop-game template. It will not send input until you edit "
                 "the window title and reward/termination settings in the YAML file."
             )
+        elif config.adapter == "geometry_dash":
+            st.warning(
+                "Geometry Dash is controlled through the real desktop window. Open the game, "
+                "select a level, enable Auto-Retry, then start training. Keep the game focused "
+                "and do not let other windows cover it. Ctrl+C or the mouse-corner failsafe stops it."
+            )
+        jump_binding = next((b for b in config.actions.bindings if b.name == "jump"), None)
+        hold_binding = next((b for b in config.actions.bindings if b.name == "hold_jump"), None)
+        jump_key_default = (
+            jump_binding.keys[0]
+            if jump_binding is not None and jump_binding.keys
+            else (hold_binding.keys[0] if hold_binding is not None and hold_binding.keys else "space")
+        )
+        jump_tap_default = (
+            float(jump_binding.duration)
+            if jump_binding is not None and jump_binding.duration is not None
+            else float(config.actions.duration)
+        )
+        jump_hold_default = (
+            float(hold_binding.duration)
+            if hold_binding is not None and hold_binding.duration is not None
+            else max(jump_tap_default, 0.12)
+        )
         algorithms = ["ppo", "a2c"] + (["maskable_ppo"] if maskable_ppo_available() else [])
         default_algorithm = config.training.algorithm if config.training.algorithm in algorithms else "ppo"
         algorithm = st.selectbox(
@@ -300,6 +373,12 @@ def main() -> None:
             index=["state", "grayscale", "rgb"].index(config.observation.mode),
             help="Pixels use CnnPolicy; state observations use MlpPolicy.",
         )
+        if is_desktop_control and observation_mode == "state":
+            st.error(
+                "Desktop-controlled games must learn from pixels. Choose grayscale or rgb; "
+                "the adapter will not substitute hidden game state."
+            )
+            return
         resolution_default = f"{config.observation.width}x{config.observation.height}"
         resolution = st.text_input("Pixel resolution (WIDTHxHEIGHT)", value=resolution_default)
         try:
@@ -328,20 +407,60 @@ def main() -> None:
             value=float(config.actions.duration),
             step=0.01,
             format="%.2f",
+            disabled=config.adapter == "geometry_dash",
+            help=(
+                "Geometry Dash uses the per-action jump/hold durations below."
+                if config.adapter == "geometry_dash"
+                else "Fallback hold duration for desktop action bindings without their own duration."
+            ),
         )
+        jump_key: str | None = None
+        jump_tap: float | None = None
+        jump_hold: float | None = None
+        if config.adapter == "geometry_dash":
+            with st.expander("Geometry Dash jump controls", expanded=True):
+                jump_key = st.text_input("Jump key", value=jump_key_default)
+                jump_tap = st.number_input(
+                    "Short jump press (seconds)",
+                    min_value=0.0,
+                    max_value=float(config.actions.max_duration),
+                    value=min(jump_tap_default, float(config.actions.max_duration)),
+                    step=0.01,
+                    format="%.2f",
+                )
+                jump_hold = st.number_input(
+                    "Hold jump (seconds)",
+                    min_value=0.0,
+                    max_value=float(config.actions.max_duration),
+                    value=min(jump_hold_default, float(config.actions.max_duration)),
+                    step=0.01,
+                    format="%.2f",
+                )
+                st.caption(
+                    "These edit the jump/hold_jump bindings for this dashboard run only. "
+                    "The release_jump action is always available and every action releases keys."
+                )
         n_envs = st.number_input(
             "Parallel environments",
             min_value=1,
-            max_value=1 if config.adapter == "desktop" else 32,
-            value=min(int(config.training.n_envs), 1 if config.adapter == "desktop" else 32),
+            max_value=1 if is_desktop_control else 32,
+            value=min(int(config.training.n_envs), 1 if is_desktop_control else 32),
+            disabled=is_desktop_control,
         )
         seed = st.number_input("Random seed", min_value=0, max_value=2**31 - 1, value=int(config.training.seed))
         eval_freq = st.number_input(
             "Evaluation frequency (env steps, 0 = off)",
             min_value=0,
             max_value=100_000,
-            value=0 if config.adapter == "desktop" else int(config.training.eval_freq),
+            value=0 if is_desktop_control else int(config.training.eval_freq),
             step=1000,
+            disabled=is_desktop_control,
+            help=(
+                "Periodic evaluation is disabled for desktop games because a second "
+                "environment would control the same window."
+                if is_desktop_control
+                else None
+            ),
         )
         normalize = st.checkbox("Normalize pixels to float32 [0,1]", value=bool(config.observation.normalize))
         no_tensorboard = st.checkbox("Disable TensorBoard logging", value=False)
@@ -372,6 +491,9 @@ def main() -> None:
                         normalize=bool(normalize),
                         resume_from=resume_from,
                         no_tensorboard=bool(no_tensorboard),
+                        jump_key=jump_key,
+                        jump_tap=jump_tap,
+                        jump_hold=jump_hold,
                     )
                     st.success(f"Launched training run {payload['run_name']} (PID {payload['pid']}).")
                     st.code(command)
@@ -408,6 +530,12 @@ def main() -> None:
                     if status.get("ep_len_mean") is not None
                     else "—",
                 )
+                if status.get("progress_pct") is not None:
+                    col1.metric("Level progress (latest)", f"{float(status['progress_pct']):.2f}%")
+                if status.get("survival_seconds") is not None:
+                    col2.metric(
+                        "Survival (latest)", f"{float(status['survival_seconds']):.2f}s"
+                    )
             if active.get("run_dir"):
                 run_dir = Path(active["run_dir"])
                 control_cols = st.columns(3)
@@ -443,6 +571,14 @@ def main() -> None:
                 if {"timesteps", "length"}.issubset(frame.columns):
                     st.caption("Episode length (early termination can make this shorter).")
                     st.line_chart(frame, x="timesteps", y="length")
+                if {"timesteps", "max_progress_pct"}.issubset(frame.columns):
+                    st.caption(
+                        "Maximum visual level progress per episode (approximate bar reading)."
+                    )
+                    st.line_chart(frame, x="timesteps", y="max_progress_pct")
+                if {"timesteps", "survival_seconds"}.issubset(frame.columns):
+                    st.caption("Survival time per episode (seconds).")
+                    st.line_chart(frame, x="timesteps", y="survival_seconds")
             else:
                 st.info("No completed episodes have been recorded yet. Refresh after training warms up.")
         with right:

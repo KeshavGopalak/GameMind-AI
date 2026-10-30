@@ -19,6 +19,7 @@ contract is usually missing a signal or a lifecycle hook.
 | An emulator has a Python API (e.g. a project-specific wrapper) | Custom adapter | Yes | RAM/state observations if the API exposes them |
 | A game has a socket or HTTP control API | Custom adapter | Yes | Depending on the API's observations and score |
 | The game only accepts desktop keyboard/mouse input and screenshots | `adapter: desktop` | Config + reward/termination design; sometimes custom code | Pixels, configured controls, time limits, template detectors |
+| Geometry Dash (specialised real-window integration) | `adapter: geometry_dash` | Use the shipped config; optional bar calibration | Pixels, jump keys, approximate visual progress, death/reset with Auto-Retry |
 | The game needs memory access, anti-cheat bypass, or a proprietary SDK | Out of scope | — | Not supported; do not attempt to defeat anti-cheat or access-protect a game. |
 
 The desktop adapter is intentionally not advertised as universal. It can send ordinary input and
@@ -274,6 +275,14 @@ with mss.mss() as sct:
 ```
 
 The adapter converts BGRA to RGB. Adjust the region for display scaling (Windows DPI, Retina, etc.).
+
+## Geometry Dash
+
+Geometry Dash uses a dedicated adapter rather than the generic desktop template. It supplies
+window lookup, a configurable capture region, progress-bar vision, death/reset logic, and jump
+actions. Read [geometry_dash.md](geometry_dash.md) before changing its parameters. The general
+desktop safety rules still apply: focus is required, keys are released, Auto-Retry is required for
+death detection, and only one environment may control the window.
 
 ## Template termination and reward detection
 

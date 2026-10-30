@@ -24,6 +24,7 @@ def test_all_shipped_configs_parse(project_root):
         "example_game",
         "example_game_random",
         "desktop_game.example",
+        "geometry_dash",
     ]
     for name in names:
         config = load_game_config(project_root / "configs" / f"{name}.yaml")

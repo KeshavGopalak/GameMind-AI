@@ -19,6 +19,7 @@ from gamemind.training.callbacks import (
 )
 from gamemind.training.model_io import (
     load_model_bundle,
+    assert_observation_mode_compatible,
     metadata_path_for,
     save_config_snapshot,
     save_model_bundle,
@@ -89,11 +90,26 @@ class Trainer:
         log_dir: str | Path | None = None,
         run_name: str | None = None,
         resume_from: str | Path | None = None,
+        allow_transfer: bool = False,
+        stop_on_completion: bool = False,
     ) -> None:
         self.config = config
+        # Only meaningful for adapters whose completion signal is enabled and
+        # trustworthy; the session runner decides that from the level profile.
+        self.stop_on_completion = bool(stop_on_completion)
+        # Reusing a policy from another level is an explicit experiment backed by
+        # the library's compatibility checks, never a silent fallback.
+        self.allow_transfer = bool(allow_transfer)
         self.model_path = resolve_project_path(
             model_path or (DEFAULT_MODEL_DIR / f"{safe_name(config.name)}.zip")
         )
+        if self.model_path.suffix.lower() != ".zip":
+            self.model_path = self.model_path.with_suffix(".zip")
+        if config.adapter.strip().lower() == "geometry_dash" and self.model_path.exists():
+            raise ConfigError(
+                f"Refusing to overwrite existing Geometry Dash model {self.model_path}. "
+                "Choose a new --output for this experiment."
+            )
         self.checkpoint_root = resolve_project_path(checkpoint_dir or DEFAULT_CHECKPOINT_DIR)
         self.log_root = resolve_project_path(log_dir or DEFAULT_LOG_DIR)
         self.run_name = run_name
@@ -151,6 +167,7 @@ class Trainer:
             "n_envs": training.n_envs,
             "seed": training.seed,
             "resume_from": str(self.resume_from) if self.resume_from else None,
+            "transfer": bool(self.allow_transfer and self.resume_from is not None),
         }
         self._status = TrainingStatus(self.status_path, base_status)
         result = TrainingResult(
@@ -189,11 +206,19 @@ class Trainer:
                     env=train_env,
                     device=resolve_device(training.device),
                 )
+                assert_observation_mode_compatible(metadata, config)
                 meta_game = metadata.get("game")
                 if meta_game and safe_name(str(meta_game)) != safe_name(config.name):
-                    raise ModelCompatibilityError(
-                        f"Checkpoint was trained for game {meta_game!r}, but the current config is "
-                        f"{config.name!r}. Use the matching config to continue training."
+                    if not self.allow_transfer:
+                        raise ModelCompatibilityError(
+                            f"Checkpoint was trained for game {meta_game!r}, but the current config is "
+                            f"{config.name!r}. Use the matching config to continue training, or "
+                            "enable initialization from another level deliberately."
+                        )
+                    logger.info(
+                        "Initializing from a policy trained for %s; this is a transfer "
+                        "experiment, not a continuation of that level.",
+                        meta_game,
                     )
                 initial_timesteps = int(model.num_timesteps)
                 policy_label = str(metadata.get("policy") or type(model.policy).__name__)
@@ -263,6 +288,7 @@ class Trainer:
                 run_id=self.run_id,
                 initial_timesteps=initial_timesteps,
                 additional_timesteps=training.timesteps,
+                stop_on_completion=self.stop_on_completion,
                 verbose=training.verbose,
             )
             checkpoint = BundleCheckpointCallback(
@@ -289,7 +315,7 @@ class Trainer:
             model.learn(
                 total_timesteps=training.timesteps,
                 callback=callback_list,
-                log_interval=100,
+                log_interval=1 if config.adapter.strip().lower() == "geometry_dash" else 100,
                 reset_num_timesteps=self.resume_from is None,
                 progress_bar=training.progress_bar,
             )
@@ -320,7 +346,8 @@ class Trainer:
                     **result.metrics,
                     model_path=str(stopped_path),
                     stopped_model_path=str(stopped_path),
-                    message="Training stopped early. Load the stopped model to inspect or continue.",
+                    message=control.stop_reason
+                    or "Training stopped early. Load the stopped model to inspect or continue.",
                 )
             else:
                 save_model_bundle(

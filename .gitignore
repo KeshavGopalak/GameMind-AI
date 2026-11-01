@@ -42,3 +42,18 @@ desktop.ini
 # Screenshots and recordings created during local debugging
 screenshots/
 recordings/
+
+# GameMind library: profiles and configs are tracked; runtime data is not
+library/state/
+library/queues/
+library/archive/
+library/games/*/levels/*/sessions/
+library/games/*/levels/*/evaluations/
+library/games/*/levels/*/runs/
+library/games/*/levels/*/models/
+library/games/*/levels/*/checkpoints/
+library/**/*.zip
+library/**/*.metadata.json
+
+# Local scratch files
+.tmp/

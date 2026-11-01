@@ -74,7 +74,7 @@ class ObservationProcessor:
 
     @property
     def channels(self) -> int:
-        return 1 if self.config.mode == "grayscale" else 3
+        return 1 if self.config.mode in {"grayscale", "canny"} else 3
 
     @property
     def output_shape(self) -> tuple[int, int, int]:
@@ -112,9 +112,11 @@ class ObservationProcessor:
         else:
             resized = rgb_or_gray.copy()
 
-        if self.config.mode == "grayscale":
+        if self.config.mode in {"grayscale", "canny"}:
             if resized.ndim == 3:
                 resized = cv2.cvtColor(resized, cv2.COLOR_RGB2GRAY)
+            if self.config.mode == "canny":
+                resized = cv2.Canny(resized, self.config.canny_low, self.config.canny_high)
             image = resized[np.newaxis, :, :]
         else:
             if resized.ndim == 2:

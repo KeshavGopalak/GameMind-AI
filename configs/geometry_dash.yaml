@@ -44,6 +44,8 @@ game:
     reset_timeout: 5.0
     reset_poll_interval: 0.04
     fps: 30
+    # Assumed refresh rate for optional hold_frames; not synchronized to the game.
+    game_frame_rate: 60
 
     # Progress-bar detection. null = find the long white outlined bar near the
     # top of the frame automatically. For a scaled HUD, set the bar's bounding
@@ -72,12 +74,19 @@ game:
     # death. The game's Auto-Retry must be enabled.
     death_min_progress: 0.8
     reset_progress_max: 0.4
+    # Unvalidated bar-only completion must not be rewarded as a real win.
+    allow_bar_completion: false
+    # Reject implausible leaps and require a persistent reset before death.
+    max_progress_rate: 10.0
+    progress_jump_tolerance: 2.0
+    death_confirm_frames: 2
     completion_pct: 99.0
     completion_frames: 2
     # If the bar disappears for this many consecutive captures (pause/menu/
     # focus loss), end the episode so reset can recover instead of spinning.
     lost_gameplay_frames: 20
-    start_progress_threshold: 5.0
+    # Require a near-zero bar after reset rather than accepting an already-running attempt.
+    start_progress_threshold: 0.5
 
   render_mode: null
   seed: 42
@@ -115,6 +124,10 @@ actions:
     - name: release_jump
       keys: []
       duration: 0.0
+    # For a NEW model, try separate bindings with params: {hold_frames: 4},
+    # {hold_frames: 5}, and {hold_frames: 6}; omit duration on those bindings.
+    # At 60 Hz these request 67/83/100 ms holds, not verified game-frame counts.
+    # Adding an action changes the action space and is incompatible with old models.
     # Optional mouse-click jump. Uncomment if your setup needs it. The click is
     # sent only while the Geometry Dash window is focused.
     # - name: jump_mouse
@@ -123,16 +136,9 @@ actions:
 
 reward:
   components:
-    # Small reward for staying alive; a longer attempt is better than an
-    # immediate death.
-    - type: survival
-      key: alive
-      value: 0.02
-      name: survive
-    # +1 per percentage point of estimated progress. The visual detector's
-    # value is approximate, so keep this moderate.
+    # Reward only new episode highs, never a jitter drop and recovery.
     - type: progress
-      key: progress_pct
+      key: max_progress_pct
       scale: 1.0
       reset_on: died
       name: level_progress

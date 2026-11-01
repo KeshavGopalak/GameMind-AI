@@ -19,7 +19,7 @@ from gamemind.utils.errors import ConfigError
 from gamemind.utils.paths import PROJECT_ROOT, resolve_project_path
 
 SUPPORTED_ALGORITHMS = ("ppo", "a2c", "maskable_ppo")
-OBSERVATION_MODES = ("state", "rgb", "grayscale")
+OBSERVATION_MODES = ("state", "rgb", "grayscale", "canny")
 MOUSE_BUTTONS = ("left", "right", "middle")
 
 
@@ -101,6 +101,8 @@ class ObservationConfig:
     normalize: bool = False
     # Fractional crop [top, left, bottom, right], each 0..0.45. Applied before resize.
     crop: tuple[float, float, float, float] | None = None
+    canny_low: int = 50
+    canny_high: int = 150
 
     def __post_init__(self) -> None:
         self.mode = str(self.mode).strip().lower()
@@ -112,6 +114,10 @@ class ObservationConfig:
         self.height = _as_int(self.height, "observation.height", minimum=32, maximum=1024)
         self.stack = _as_int(self.stack, "observation.stack", minimum=1, maximum=16)
         self.normalize = _as_bool(self.normalize, "observation.normalize")
+        self.canny_low = _as_int(self.canny_low, "observation.canny_low", minimum=0, maximum=255)
+        self.canny_high = _as_int(self.canny_high, "observation.canny_high", minimum=0, maximum=255)
+        if self.canny_low >= self.canny_high:
+            raise ConfigError("observation.canny_low must be less than canny_high.")
         if self.crop is not None:
             if not isinstance(self.crop, (list, tuple)) or len(self.crop) != 4:
                 raise ConfigError(
@@ -147,7 +153,7 @@ class ObservationConfig:
     def from_dict(cls, data: Mapping[str, Any] | None) -> "ObservationConfig":
         raw = _mapping(data, "observation")
         _check_unknown(
-            raw, {"mode", "width", "height", "stack", "normalize", "crop"}, "observation"
+            raw, {"mode", "width", "height", "stack", "normalize", "crop", "canny_low", "canny_high"}, "observation"
         )
         defaults = cls()
         return cls(
@@ -157,11 +163,13 @@ class ObservationConfig:
             stack=raw.get("stack", defaults.stack),
             normalize=raw.get("normalize", defaults.normalize),
             crop=raw.get("crop", defaults.crop),
+            canny_low=raw.get("canny_low", defaults.canny_low),
+            canny_high=raw.get("canny_high", defaults.canny_high),
         )
 
     @property
     def is_pixel(self) -> bool:
-        return self.mode in {"rgb", "grayscale"}
+        return self.mode in {"rgb", "grayscale", "canny"}
 
 
 # ---------------------------------------------------------------------------

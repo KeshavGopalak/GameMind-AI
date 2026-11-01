@@ -65,6 +65,27 @@ def available_adapters() -> list[str]:
     return sorted(_FACTORIES)
 
 
+def adapter_available(name: str) -> bool:
+    """Return True when *name* resolves to a usable adapter in this install.
+
+    This never raises: the Add Game form uses it to explain that a game needs a
+    new adapter instead of pretending every game is supported.
+    """
+    key = str(name or "").strip().lower()
+    if not key:
+        return False
+    _register_builtins()
+    if key in _FACTORIES:
+        return True
+    if ":" not in key:
+        return False
+    try:
+        load_custom_adapter_class(key)
+    except Exception:
+        return False
+    return True
+
+
 def load_custom_adapter_class(path: str) -> type[GameAdapter]:
     """Import a custom adapter from ``my_module:MyAdapter``."""
     if ":" not in path:

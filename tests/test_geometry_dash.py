@@ -110,6 +110,9 @@ def make_geometry_config(**overrides) -> GameConfig:
         "completion_frames": 2,
         "lost_gameplay_frames": 2,
         "start_progress_threshold": 5.0,
+        "progress_jump_tolerance": 100.0,
+        "death_confirm_frames": 1,
+        "allow_bar_completion": True,
     }
     params.update(overrides.pop("params", {}))
     actions = overrides.pop(
@@ -362,6 +365,70 @@ def test_jump_actions_press_and_release_space():
         assert inputs.held == set()
         adapter.step(3)  # release_jump
         assert inputs.held == set()
+    finally:
+        adapter.close()
+
+
+def test_suspicious_progress_and_single_frame_reset_do_not_reward_or_terminate():
+    capture = LiveCapture(frame_with_progress(0.0))
+    config = make_geometry_config(params={"progress_jump_tolerance": 2.0, "death_confirm_frames": 2, "allow_bar_completion": False})
+    adapter = make_adapter(capture=capture, config=config)
+    adapter.connect()
+    try:
+        adapter.reset(seed=0)
+        capture.frame = frame_with_progress(100.0)
+        _, reward, terminated, _, info = adapter.step(0)
+        assert not terminated and reward == 0
+        assert info["bar_found"] is False
+        assert info["bar_reason"] == "implausible progress jump"
+        assert info["max_progress_pct"] == 0
+        capture.frame = frame_with_progress(1.9)
+        adapter.step(0)
+        capture.frame = frame_with_progress(0)
+        _, _, terminated, _, info = adapter.step(0)
+        assert not terminated and not info["died"]
+        _, reward, terminated, _, info = adapter.step(0)
+        assert terminated and info["died"] and reward == pytest.approx(-5)
+    finally:
+        adapter.close()
+
+
+def test_held_frame_duration_uses_elapsed_time(monkeypatch):
+    from gamemind.adapters import geometry_dash
+    clock = [0.0]
+    monkeypatch.setattr(geometry_dash.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(geometry_dash.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    inputs = FakeInput()
+    config = make_geometry_config(actions={"frame_skip": 1, "duration": 0, "max_duration": 0.3,
+        "bindings": [{"name": "hold", "keys": ["space"], "params": {"hold_frames": 6}}]})
+    adapter = make_adapter(inputs=inputs, config=config)
+    adapter.connect()
+    try:
+        adapter.reset(seed=0)
+        before = clock[0]
+        _, _, _, _, info = adapter.step(0)
+        assert clock[0] - before == pytest.approx(0.1)
+        assert info["requested_hold_seconds"] == pytest.approx(0.1)
+        assert not inputs.held
+    finally:
+        adapter.close()
+
+
+def test_hold_frames_releases_on_focus_loss(monkeypatch):
+    from gamemind.utils.errors import InputBackendError
+    class FocusLoss(FakeInput):
+        def check_focus(self, title):
+            raise InputBackendError("focus lost")
+    inputs = FocusLoss()
+    config = make_geometry_config(actions={"frame_skip": 1, "duration": 0, "max_duration": 0.3,
+        "bindings": [{"name": "hold", "keys": ["space"], "params": {"hold_frames": 4}}]})
+    adapter = make_adapter(inputs=inputs, config=config)
+    adapter.connect()
+    try:
+        adapter.reset(seed=0)
+        with pytest.raises(InputBackendError, match="focus lost"):
+            adapter.step(0)
+        assert not inputs.held
     finally:
         adapter.close()
 

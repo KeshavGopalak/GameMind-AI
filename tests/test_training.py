@@ -12,6 +12,7 @@ from gamemind.evaluation import run_episodes
 from gamemind.training import Trainer
 from gamemind.training.model_io import (
     assert_model_env_compatible,
+    assert_observation_mode_compatible,
     config_for_model,
     load_model_bundle,
     metadata_path_for,
@@ -141,6 +142,15 @@ def test_metadata_config_recreates_matching_environment(trained_cartpole):
         assert env.action_space.contains(int(action))
     finally:
         env.close()
+
+
+def test_canny_checkpoint_mismatch_is_rejected(project_root):
+    config = load_game_config(project_root / "configs" / "geometry_dash.yaml")
+    metadata = {"config": config.as_dict()}
+    canny = replace(config, observation=replace(config.observation, mode="canny"))
+    with pytest.raises(ModelCompatibilityError, match="not interchangeable"):
+        assert_observation_mode_compatible(metadata, canny)
+    assert_observation_mode_compatible(metadata, config)
 
 
 def test_crop_is_applied_before_resize(project_root):

@@ -37,3 +37,11 @@ class TrainingError(GameMindError, RuntimeError):
 
 class ModelCompatibilityError(GameMindError, RuntimeError):
     """A saved model does not match the environment it is being loaded into."""
+
+
+class LibraryError(GameMindError, ValueError):
+    """A game/level/session record is invalid or would damage existing data."""
+
+
+class WorkerError(GameMindError, RuntimeError):
+    """A background training worker could not be started or controlled."""

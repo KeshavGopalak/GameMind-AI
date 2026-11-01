@@ -46,6 +46,7 @@ class TrainingControlCallback(BaseCallback):
         run_id: str,
         initial_timesteps: int,
         additional_timesteps: int,
+        stop_on_completion: bool = False,
         verbose: int = 0,
     ) -> None:
         super().__init__(verbose=verbose)
@@ -67,12 +68,20 @@ class TrainingControlCallback(BaseCallback):
         self._last_episode_reward: float | None = None
         self._best_episode_reward: float | None = None
         self._latest_metrics: dict[str, float] = {}
+        self._episode_breakdowns: dict[int, dict[str, float]] = {}
+        self._progress: deque[float] = deque(maxlen=config.training.stats_window_size)
+        self._survival: deque[float] = deque(maxlen=config.training.stats_window_size)
+        self._best_progress: float | None = None
         self._started = time.monotonic()
         self._last_status_write = 0.0
         self._last_control_check = 0.0
         self.stopped = False
         self.stop_model_path: Path | None = None
         self._last_timesteps = 0
+        # Stopping on the game's own completion signal, never on reward/progress.
+        self.stop_on_completion = bool(stop_on_completion)
+        self.completed_seen = False
+        self.stop_reason: str | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -91,6 +100,18 @@ class TrainingControlCallback(BaseCallback):
         if not self._check_controls():
             return False
         self._collect_episodes()
+        if self.stop_on_completion and self.completed_seen:
+            logger.info(
+                "Completion detector fired at %d timesteps; saving a checkpoint and stopping.",
+                int(self.model.num_timesteps),
+            )
+            self._stop_and_checkpoint(
+                reason=(
+                    "Stopped because the level's completion detector fired. "
+                    "A checkpoint and the completion evidence were saved."
+                )
+            )
+            return False
         now = time.monotonic()
         if now - self._last_status_write >= 0.75:
             self._write_status()
@@ -108,18 +129,28 @@ class TrainingControlCallback(BaseCallback):
             infos = [infos]
         if not isinstance(infos, (list, tuple)):
             return
-        for info in infos:
+        for index, info in enumerate(infos):
             if not isinstance(info, dict):
                 continue
+            totals = self._episode_breakdowns.setdefault(index, {})
+            breakdown = info.get("reward_breakdown")
+            if isinstance(breakdown, dict):
+                for name, value in breakdown.items():
+                    if isinstance(value, (int, float, np.integer, np.floating)) and np.isfinite(value):
+                        totals[name] = totals.get(name, 0.0) + float(value)
             for key in self.TRACKED_INFO_METRICS:
                 value = info.get(key)
                 if isinstance(value, bool):
                     self._latest_metrics[key] = 1.0 if value else 0.0
+                    if key == "completed" and value:
+                        self.completed_seen = True
                     continue
                 if isinstance(value, (int, float, np.integer, np.floating)):
                     number = float(value)
                     if np.isfinite(number):
                         self._latest_metrics[key] = number
+                        if key == "completed" and number >= 0.5:
+                            self.completed_seen = True
             episode = info.get("episode")
             if not isinstance(episode, dict):
                 continue
@@ -142,8 +173,18 @@ class TrainingControlCallback(BaseCallback):
                 "timestamp": utc_now_iso(),
             }
             for key in self.TRACKED_INFO_METRICS:
-                if key in self._latest_metrics:
-                    record[key] = round(self._latest_metrics[key], 4)
+                value = info.get(key)
+                if isinstance(value, (bool, int, float, np.integer, np.floating)) and np.isfinite(value):
+                    record[key] = round(float(value), 4)
+            if totals:
+                record["reward_breakdown"] = dict(totals)
+            self._episode_breakdowns.pop(index, None)
+            if "max_progress_pct" in record:
+                progress = record["max_progress_pct"]
+                self._progress.append(progress)
+                self._best_progress = max(progress, self._best_progress if self._best_progress is not None else progress)
+            if "survival_seconds" in record:
+                self._survival.append(record["survival_seconds"])
             append_jsonl(self.episodes_path, record)
 
     def metrics(self) -> dict[str, Any]:
@@ -157,6 +198,12 @@ class TrainingControlCallback(BaseCallback):
             "target_timesteps": self.initial_timesteps + self.additional_timesteps,
             "progress": progress,
             "episodes": self._episode_count,
+            "wall_seconds": elapsed,
+            "attempts_per_minute": self._episode_count * 60.0 / elapsed,
+            "best_progress_pct": self._best_progress,
+            "mean_progress_pct": float(np.mean(self._progress)) if self._progress else None,
+            "median_progress_pct": float(np.median(self._progress)) if self._progress else None,
+            "mean_survival_seconds": float(np.mean(self._survival)) if self._survival else None,
             "ep_rew_mean": float(np.mean(self._rewards)) if self._rewards else None,
             "ep_len_mean": float(np.mean(self._lengths)) if self._lengths else None,
             "last_episode_reward": self._last_episode_reward,
@@ -204,7 +251,7 @@ class TrainingControlCallback(BaseCallback):
         self.status.update(state="training", **self.metrics(), message="Resumed.")
         return True
 
-    def _stop_and_checkpoint(self) -> None:
+    def _stop_and_checkpoint(self, *, reason: str | None = None) -> None:
         steps = int(self.model.num_timesteps)
         self.status.update(state="stopping", **self.metrics(), message="Saving a checkpoint before stopping...")
         path = self.checkpoint_dir / f"stopped_{steps}_steps.zip"
@@ -224,10 +271,11 @@ class TrainingControlCallback(BaseCallback):
             raise TrainingError(f"Could not save the stop checkpoint: {exc}") from exc
         self.stopped = True
         self.stop_model_path = path
+        self.stop_reason = reason
         self.status.update(
             state="stopped",
             **self.metrics(),
-            message="Training stopped. A checkpoint was saved.",
+            message=reason or "Training stopped. A checkpoint was saved.",
             stopped_model_path=str(path),
         )
 

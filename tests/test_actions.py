@@ -45,6 +45,25 @@ def test_duplicate_keys_in_one_action_rejected():
         ActionsConfig.from_dict({"bindings": [{"name": "x", "keys": ["a", "A"]}]})
 
 
+def test_pyautogui_key_pause_is_opt_out_and_releases(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from gamemind.actions.backends import PyAutoGUIBackend
+    events = []
+    fake = SimpleNamespace(KEYBOARD_KEYS=["space"], FAILSAFE=True, PAUSE=0,
+        keyDown=lambda key, _pause=True: events.append(("down", key, _pause)),
+        keyUp=lambda key, _pause=True: events.append(("up", key, _pause)))
+    monkeypatch.setitem(sys.modules, "pyautogui", fake)
+    backend = PyAutoGUIBackend(key_pause=False)
+    try:
+        backend.key_down("space")
+        backend.release_all()
+        assert events == [("down", "space", False), ("up", "space", False)]
+        assert not backend._held
+    finally:
+        backend.close()
+
+
 def test_frame_skip_bounds():
     with pytest.raises(ConfigError, match="frame_skip"):
         ActionsConfig(frame_skip=0)

@@ -87,6 +87,17 @@ def test_progress_reward_direction_and_reset_on_event():
     assert function.evaluate(context(signals={"distance": 5.0, "collected": 0.0}))[0] == 0.0
 
 
+def test_high_water_progress_does_not_reward_jitter_or_restart():
+    function = build_reward_function(RewardConfig(components=(
+        {"type": "progress", "key": "max_progress_pct", "reset_on": "died"},
+    )))
+    values = [0, 2, 2, 3, 3]
+    assert [function.evaluate(context(signals={"max_progress_pct": x, "died": 0}))[0] for x in values] == [0, 2, 0, 1, 0]
+    assert function.evaluate(context(signals={"max_progress_pct": 3, "died": 1}))[0] == 0
+    function.reset()
+    assert function.evaluate(context(signals={"max_progress_pct": 0, "died": 0}))[0] == 0
+
+
 def test_clipping_and_survival():
     function = build_reward_function(
         RewardConfig(

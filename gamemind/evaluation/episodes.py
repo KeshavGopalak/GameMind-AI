@@ -12,7 +12,7 @@ import numpy as np
 
 from gamemind.config import GameConfig
 from gamemind.envs.factory import build_env
-from gamemind.training.model_io import assert_model_env_compatible, load_model_bundle
+from gamemind.training.model_io import assert_model_env_compatible, assert_observation_mode_compatible, load_model_bundle
 from gamemind.utils.device import resolve_device
 from gamemind.utils.logging import get_logger
 from gamemind.utils.serialization import atomic_write_json, utc_now_iso
@@ -33,6 +33,9 @@ class EpisodeResult:
     progress_pct: float | None = None
     max_progress_pct: float | None = None
     survival_seconds: float | None = None
+    # True only when the adapter's own completion detector fired. Never derived
+    # from progress, reward, or episode length.
+    completed: bool = False
 
 
 @dataclass
@@ -125,13 +128,13 @@ def run_episodes(
     """
     if episodes < 1:
         raise ValueError("episodes must be at least 1")
+    model, metadata, algorithm = load_model_bundle(
+        model_path, env=None, device=resolve_device(device)
+    )
+    assert_observation_mode_compatible(metadata, config)
     env = build_env(config, render_mode="human" if render else None)
-    model = None
     result: EvaluationResult | None = None
     try:
-        model, metadata, algorithm = load_model_bundle(
-            model_path, env=None, device=resolve_device(device)
-        )
         assert_model_env_compatible(model, env)
         playback_fps = _render_fps(env, fps)
         result = EvaluationResult(
@@ -206,6 +209,7 @@ def run_episodes(
                 progress_pct=_metric("progress_pct"),
                 max_progress_pct=_metric("max_progress_pct"),
                 survival_seconds=_metric("survival_seconds"),
+                completed=bool(last_info.get("completed")),
             )
             result.episodes.append(episode_result)
             logger.info(

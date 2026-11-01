@@ -37,6 +37,7 @@ import cv2
 import numpy as np
 from gymnasium.envs.registration import EnvSpec
 
+from gamemind.actions.backends import PyAutoGUIBackend
 from gamemind.adapters.desktop_adapter import DesktopGameAdapter
 from gamemind.config import GameConfig
 from gamemind.utils.errors import AdapterError, ConfigError, InputBackendError, ObservationError
@@ -197,6 +198,7 @@ class GeometryDashVision:
         self.fill_hsv_low = self._hsv(fill_hsv_low, "progress_fill_hsv_low")
         self.fill_hsv_high = self._hsv(fill_hsv_high, "progress_fill_hsv_high")
         self._reference_color: np.ndarray | None = None
+        self._calibrated_bar: tuple[int, int, int, int] | None = None
         if np.any(self.fill_hsv_low > self.fill_hsv_high):
             raise ConfigError(
                 "progress_fill_hsv_low must be <= progress_fill_hsv_high for each HSV channel."
@@ -236,6 +238,8 @@ class GeometryDashVision:
                 return ProgressReading(found=False, reason="no white progress bar found")
             confidence = 1.0
 
+        if self._calibrated_bar is not None and bar != self._calibrated_bar:
+            return ProgressReading(found=False, bar=bar, reason="progress bar moved")
         x, y, bar_width, bar_height = bar
         inner = frame[
             y + 4 : y + bar_height - 4,
@@ -291,6 +295,7 @@ class GeometryDashVision:
         if reference.shape != (3,):
             return False
         self._reference_color = reference
+        self._calibrated_bar = bar
         return True
 
     # ------------------------------------------------------------------
@@ -442,6 +447,11 @@ class GeometryDashAdapter(DesktopGameAdapter):
             "reset_timeout",
             "reset_poll_interval",
             "resume_keys",
+            "max_progress_rate",
+            "progress_jump_tolerance",
+            "death_confirm_frames",
+            "allow_bar_completion",
+            "game_frame_rate",
         }
     )
 
@@ -529,6 +539,28 @@ class GeometryDashAdapter(DesktopGameAdapter):
                 "reset_progress_max must be smaller than death_min_progress, otherwise small "
                 "normal progress jitter looks like a death."
             )
+        self.game_frame_rate = self._number(
+            params.get("game_frame_rate", 60.0), "game_frame_rate", 1.0, 360.0
+        )
+        for binding in config.actions.bindings:
+            if "hold_frames" in binding.params:
+                frames = self._int(binding.params["hold_frames"], "hold_frames", 1, 300)
+                if binding.duration is not None or not binding.keys:
+                    raise ConfigError("hold_frames requires keys and cannot be combined with duration.")
+                if frames / self.game_frame_rate > config.actions.max_duration:
+                    raise ConfigError("hold_frames exceeds actions.max_duration at game_frame_rate.")
+        self.max_progress_rate = self._number(
+            params.get("max_progress_rate", 10.0), "max_progress_rate", 0.01, 100.0
+        )
+        self.progress_jump_tolerance = self._number(
+            params.get("progress_jump_tolerance", 2.0), "progress_jump_tolerance", 0.0, 100.0
+        )
+        self.death_confirm_frames = self._int(
+            params.get("death_confirm_frames", 2), "death_confirm_frames", 1, 20
+        )
+        self.allow_bar_completion = params.get("allow_bar_completion", False)
+        if not isinstance(self.allow_bar_completion, bool):
+            raise ConfigError("game.params.allow_bar_completion must be true or false.")
         self.completion_pct = self._number(
             params.get("completion_pct", 99.0), "completion_pct", 50.0, 100.0
         )
@@ -575,6 +607,8 @@ class GeometryDashAdapter(DesktopGameAdapter):
         self._completion_hits = 0
         self._episode_started: float | None = None
         self._episode_deaths = 0
+        self._death_hits = 0
+        self._last_progress_time: float | None = None
         self._reset_attempts = 0
         self._resume_attempts = 0
 
@@ -605,6 +639,8 @@ class GeometryDashAdapter(DesktopGameAdapter):
             raise AdapterError("Geometry Dash needs game.params.window_title.")
         self.window_info = self._window_locator.find(self.window_title)
         try:
+            if self._input is None:
+                self._input = PyAutoGUIBackend(failsafe=True, key_pause=False)
             super().connect()
             _, inputs = self._require_backends()
             inputs.validate_keys(self.resume_keys)
@@ -639,6 +675,10 @@ class GeometryDashAdapter(DesktopGameAdapter):
         self._max_progress_pct = 0.0
         self._bar_missing_frames = 0
         self._episode_deaths = 0
+        self._death_hits = 0
+        self._last_progress_time = None
+        self._vision._reference_color = None
+        self._vision._calibrated_bar = None
         self._reset_attempts = 0
         self._resume_attempts = 0
         self._episode_started = time.monotonic()
@@ -707,6 +747,7 @@ class GeometryDashAdapter(DesktopGameAdapter):
         self._reading = reading
         self._last_progress_pct = float(reading.progress_pct)
         self._max_progress_pct = float(reading.progress_pct)
+        self._last_progress_time = time.monotonic()
         self._bar_missing_frames = 0
         self._episode_started = time.monotonic()
 
@@ -736,6 +777,32 @@ class GeometryDashAdapter(DesktopGameAdapter):
     # ------------------------------------------------------------------
     # Observations and input
     # ------------------------------------------------------------------
+    def _apply_action(self, action: int) -> None:
+        binding = self.action_config.binding(int(action))
+        _, inputs = self._require_backends()
+        if "hold_frames" in binding.params:
+            duration = float(binding.params["hold_frames"]) / self.game_frame_rate
+        else:
+            duration = float(binding.duration if binding.duration is not None else self.action_config.duration)
+        self._ensure_focus(inputs)
+        try:
+            for key in binding.keys:
+                inputs.key_down(key)
+            for button in binding.mouse_click:
+                inputs.click(button)
+            if binding.mouse_move is not None:
+                inputs.move_rel(int(binding.mouse_move[0]), int(binding.mouse_move[1]))
+            deadline = time.monotonic() + duration
+            while time.monotonic() < deadline:
+                time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+                check = getattr(inputs, "check_focus", None)
+                if callable(check):
+                    check(self.window_title)
+        finally:
+            inputs.release_all()
+        self._step_info = {"action_keys": list(binding.keys), "action_name": binding.name,
+                           "focus_checked": True, "requested_hold_seconds": duration}
+
     def observe(self) -> np.ndarray:
         frame = self._grab()
         self._update_reading(frame)
@@ -749,17 +816,35 @@ class GeometryDashAdapter(DesktopGameAdapter):
         self._gameplay_lost = False
         if reading.found:
             progress = float(reading.progress_pct)
+            now = time.monotonic()
+            elapsed = now - (self._last_progress_time if self._last_progress_time is not None else now)
+            # Limit new highs relative to the last accepted high, not the last
+            # frame. Suspicious readings cannot accumulate credit by oscillating.
+            if progress > self._max_progress_pct + self.progress_jump_tolerance + self.max_progress_rate * elapsed:
+                self._reading = ProgressReading(found=False, bar=reading.bar, reason="implausible progress jump")
+                self._bar_missing_frames += 1
+                self._completion_hits = 0
+                self._death_hits = 0
+                if self._bar_missing_frames >= self.lost_gameplay_frames:
+                    self._gameplay_lost = True
+                return
             if (
                 self._last_progress_pct is not None
                 and self._last_progress_pct >= self.death_min_progress
                 and progress <= self.reset_progress_max
             ):
-                self._died = True
-                self._episode_deaths += 1
-            self._last_progress_pct = progress
-            self._max_progress_pct = max(self._max_progress_pct, progress)
+                self._death_hits += 1
+                if self._death_hits >= self.death_confirm_frames:
+                    self._died = True
+                    self._episode_deaths += 1
+            else:
+                self._death_hits = 0
+                self._last_progress_pct = progress
+            if progress > self._max_progress_pct:
+                self._max_progress_pct = progress
+            self._last_progress_time = now
             self._bar_missing_frames = 0
-            if progress >= self.completion_pct and not self._completed_this_episode:
+            if self.allow_bar_completion and progress >= self.completion_pct and not self._completed_this_episode:
                 self._completion_hits += 1
                 if self._completion_hits >= self.completion_frames:
                     self._completed = True
@@ -768,6 +853,7 @@ class GeometryDashAdapter(DesktopGameAdapter):
                 self._completion_hits = 0
         else:
             self._completion_hits = 0
+            self._death_hits = 0
             self._bar_missing_frames += 1
             if self._bar_missing_frames >= self.lost_gameplay_frames:
                 self._gameplay_lost = True
@@ -802,6 +888,7 @@ class GeometryDashAdapter(DesktopGameAdapter):
             "survival_seconds": round(self._survival_seconds(), 3),
             "bar_found": bool(self._reading is not None and self._reading.found),
             "bar_confidence": float(self._reading.confidence) if self._reading else 0.0,
+            "bar_reason": self._reading.reason if self._reading else "",
             "died": bool(self._died),
             "completed": bool(self._completed),
             "gameplay_lost": bool(self._gameplay_lost),

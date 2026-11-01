@@ -220,6 +220,18 @@ def load_model_bundle(
     )
 
 
+def assert_observation_mode_compatible(metadata: Mapping[str, Any], config: GameConfig) -> None:
+    """Reject switching between edge maps and ordinary pixels on existing models."""
+    snapshot = metadata.get("config")
+    if isinstance(snapshot, Mapping) and isinstance(snapshot.get("observation"), Mapping):
+        saved_mode = snapshot["observation"].get("mode")
+        if saved_mode != config.observation.mode and "canny" in {saved_mode, config.observation.mode}:
+            raise ModelCompatibilityError(
+                "Canny and non-Canny observations are not interchangeable, even when their "
+                "shapes match. Use the saved preprocessing or train a separate model."
+            )
+
+
 def config_for_model(
     model_path: str | Path,
     *,
@@ -248,6 +260,7 @@ def config_for_model(
             f"No config snapshot found for {path}. Pass --config path/to/game.yaml "
             "so the environment and preprocessing can be recreated."
         )
+    assert_observation_mode_compatible(metadata, config)
     meta_game = metadata.get("game")
     if expected_game and meta_game and safe_name(str(expected_game)) != safe_name(str(meta_game)):
         raise ModelCompatibilityError(

@@ -1,0 +1,15 @@
+{
+  "id": "stereo_madness",
+  "game_id": "geometry_dash",
+  "name": "Stereo Madness",
+  "kind": "official",
+  "entry": "manual",
+  "completion_mode": "disabled",
+  "completion_pct": 99.0,
+  "completion_frames": 2,
+  "init_policy": "scratch",
+  "notes": "Seeded from configs/geometry_dash.yaml during the library migration. The level used by the earlier 20,000-step checkpoint was not recorded, so initialization for this level defaults to scratch. Confirm the level name matches the level you open in game.",
+  "created_at": "2026-11-01T01:51:52+00:00",
+  "updated_at": "2026-11-01T01:51:52+00:00",
+  "archived": false
+}

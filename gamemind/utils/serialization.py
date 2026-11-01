@@ -70,6 +70,31 @@ def atomic_write_json(path: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def atomic_write_text(path: Path, text: str) -> Path:
+    """Write text atomically (same directory, then replace)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        for attempt in range(5):
+            try:
+                os.replace(tmp_name, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return path
+
+
 def append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     """Append one JSON object to a newline-delimited file."""
     path = Path(path)

@@ -46,15 +46,20 @@ class ActionRepeat(gym.Wrapper):
         terminated = truncated = False
         info: dict[str, Any] = {}
         repeats = 0
+        breakdown: dict[str, float] = {}
         for _ in range(self.repeat):
             observation, reward, terminated, truncated, info = self.env.step(action)
             total_reward += float(reward)
+            for name, value in info.get("reward_breakdown", {}).items():
+                breakdown[name] = breakdown.get(name, 0.0) + float(value)
             repeats += 1
             if terminated or truncated:
                 break
         assert observation is not None
         info = dict(info or {})
         info["action_repeats"] = repeats
+        if breakdown:
+            info["reward_breakdown"] = breakdown
         return observation, total_reward, bool(terminated), bool(truncated), info
 
 

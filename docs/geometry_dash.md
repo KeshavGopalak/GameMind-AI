@@ -4,6 +4,12 @@ GameMind AI can control a real Geometry Dash installation on Windows through ord
 input and screen capture. The agent learns from the same pixels you see. It does **not** read the
 game's memory, level file, collision data, attempt counter, or internal position.
 
+**Safety and validation status:** The 2026-10-29 run logged implausible 100% readings
+within seconds, so its progress and completion statistics are not a reliable evaluation.
+A short follow-up on the installed game tested resets, OS-level key timing and five-attempt
+checkpoint evaluations. Actual game-frame timing, completion detection and generalization remain
+unverified; the short training experiment regressed. Do not start a long run on this evidence.
+
 This is an experimental desktop integration. The first goal is a reliable loop:
 
 1. detect the real game window,
@@ -31,6 +37,13 @@ progress depends on the level, reward design, capture rate, and how much you tra
 The adapter refuses to run unless `require_window_focus: true`. It focuses the exact
 `window_title` before every reset and action, and it releases held keys in a `finally` block and on
 close. PyAutoGUI's mouse-corner failsafe remains enabled.
+
+## Dashboard workflow
+
+The dashboard manages this game as a profile with per-level configurations, sessions, and
+checkpoints. Open it with `streamlit run dashboard/app.py`, choose **Games → Geometry Dash**, select
+or add a level, validate, then train. See [library.md](library.md) for the library layout, level
+fields, completion rules, and queue behaviour. The commands below remain the CLI equivalents.
 
 ## Manual setup
 
@@ -92,8 +105,10 @@ This means:
 - a missing bar means "not confidently in gameplay" (`bar_found: false`), not "progress 0",
 - the adapter keeps the last reliable value when the bar is briefly hidden instead of inventing a
   reward,
-- level completion is detected when the estimated fill reaches `completion_pct` (99%) for
-  `completion_frames` consecutive captures.
+- implausible progress jumps and changed bar locations are treated as uncertain; rate limits
+  are conservative configurable heuristics, not proof that a reading is correct,
+- bar-only completion is disabled by default (`allow_bar_completion: false`); enabling it
+  awards completion based on the bar alone and requires independent real-game validation.
 
 The progress fill normally uses the player's colour, so it can be orange, blue, green, or another
 colour. At reset, the adapter learns the empty bar's colour from the right-hand side and detects
@@ -116,7 +131,8 @@ Useful detector fields in `info` and episode logs:
 
 With Auto-Retry enabled, a death makes the game restart the attempt and the progress bar returns to
 0%. The adapter treats a drop from at least `death_min_progress` to at most
-`reset_progress_max` as a death. A death ends the episode with a negative reward; the next `reset()`
+`reset_progress_max`, sustained for `death_confirm_frames` captures, as a likely death.
+Deaths before detectable progress may be missed. A death ends the episode with a negative reward; the next `reset()`
 restarts the attempt.
 
 If the bar disappears for `lost_gameplay_frames` consecutive captures (pause menu, focus loss, or a
@@ -129,18 +145,19 @@ inside menus is less reliable and less safe.
 
 ## Reward shaping
 
-The shipped reward has six components:
+The shipped reward has five components:
 
 | Component | Signal | Value | Purpose |
 | --- | --- | --- | --- |
-| `survive` | `alive` | +0.02/step | prefer a longer attempt |
-| `level_progress` | `progress_pct` | +1 per percentage point | reward measured progress |
+| `level_progress` | `max_progress_pct` | +1 per new percentage point | reward estimated new highs only |
 | `death_penalty` | `died` | −5 | discourage dying |
-| `level_complete` | `completed` | +50 | strong completion bonus |
+| `level_complete` | `completed` | +50 | disabled until bar-only completion is explicitly enabled |
 | `lost_gameplay` | `gameplay_lost` | −1 | discourage losing the playable screen |
-| `time_penalty` | constant | −0.01/step | discourage stalling |
+| `time_penalty` | constant | −0.01/step | discourage stalling; may also incentivize early termination |
 
-Progress uses the approximate visual value, so progress rewards are intentionally moderate.
+The old survival bonus was removed because it exceeded the time penalty even with no
+progress. Progress uses an approximate visual value and can still be wrong; the rate limit
+must be calibrated against real recordings. Rewards have not been empirically tuned.
 If you change the reward, re-run a short experiment first. A large completion bonus with no
 survival/progress shaping often produces a policy that simply waits for rare luck.
 
@@ -190,6 +207,56 @@ The dashboard still launches a separate training process, exactly like the CLI. 
 evaluation is disabled for this adapter: a second environment would send keys to the same game
 window. Use the dashboard's **Evaluate headlessly** button or `evaluate.py` after training stops.
 
+## Experimental settings and measurements
+
+`observation.mode: canny` selects a one-channel edge map; `canny_low` and `canny_high`
+(default 50 and 150) configure thresholds. It has not been compared on the real game and
+may lose important visual details. In one recorded 84×84 frame, a visible spike was no
+longer clearly triangular in either grayscale or Canny; the player was not visible in that
+frame, so its preservation could not be assessed. This is not an evaluation of other scenes.
+Do not reuse a grayscale checkpoint for Canny, even though their observation shapes match.
+
+For new action spaces, `params: {hold_frames: 4}` (or 5, 6) converts the requested count
+using `game_frame_rate` (default 60 Hz). It is a wall-clock approximation: there is no
+synchronization with actual game frames, input backend delays add time, and registration
+has not been verified. `frame_skip` repeats complete actions, including releases; it does
+not hold a button continuously and does not represent actual game frames.
+
+The original run logged 24,769 steps, 935 episodes over 4,049 s: 6.12 steps/s and
+13.86 attempts/min. Reported median maximum progress was 3.35%, mean 10.60%, maximum
+100%; the latter two are distorted by suspect readings (24 completions in about six
+seconds). 911 episodes were labelled deaths; neither true death frequency nor obstacle
+locations are validated. First/last 200 reported medians were 3.20%/3.35%, insufficient
+evidence of improvement. TensorBoard contained no scalar metrics for PPO entropy.
+
+A desktop-only benchmark without Geometry Dash (30 samples except 20 inferences) measured
+MSS RGB capture median/p95 28.79/31.98 ms, grayscale processing 6.97/7.73 ms, bar
+search on the desktop 0.84/1.10 ms, and checkpoint inference on zeros 1.13/1.25 ms.
+Later live probes measured median capture 22.88 ms and roughly 49 ms per no-op step.
+Three consecutive strict resets were read at 0% and no-op attempts terminated near 1.46%;
+these limited checks do not establish reliability on later sections. OS keyboard sampling
+showed a requested 67 ms/100 ms hold lasting approximately 86/119 ms with the old pause,
+then 66.49/99.19 ms with the Geometry Dash key-call pause removed. Both were released;
+OS state does not prove how many game frames saw the press or that a jump occurred. [DXcam](https://github.com/ra1nty/DXcam) is a possible Windows capture
+alternative, but has not been benchmarked on this installation; no replacement is claimed.
+
+A deterministic five-attempt evaluation of the 20,000-step checkpoint using the revised
+configuration gave estimated mean/best maximum progress 3.84%/6.40%. A separate 64-step
+smoke experiment initialized from its policy then scored 1.46%/1.46% over five attempts.
+This is a regression, not evidence of learning. Evaluation used a 160-step limit; estimates
+are not independently verified. Detailed local records are in `logs/gd_baseline_eval_1793357289.json`
+and `logs/gd_revised_eval_1793357332.json`; the original model is unchanged.
+
+Episode logs now include summed reward components and status includes recent progress and
+survival summaries. Geometry Dash periodic evaluation remains disabled because a second
+environment would control the same window. Compare checkpoints in separate, deterministic,
+multiple-attempt runs using the same level and action configuration. Never treat the SB3
+reward-based best checkpoint as a best-progress checkpoint. Existing Geometry Dash model
+outputs are protected from overwrite; use a fresh `--output` for an experiment.
+
+No selectable practice segments or curriculum transfer has been verified. The only supported
+stage remains the manually selected real level; no simulated curriculum is claimed.
+
 ## Performance notes and limitations
 
 - Capture is desktop-based (`mss`), so it includes whatever is visibly on screen. Other windows or
@@ -216,14 +283,15 @@ The repository tests use fake capture/input/window backends so CI never presses 
 machine. Those tests cover window lookup, capture validation, bar reading/calibration, death/reset,
 completion, rewards, action release, Gymnasium compliance, and a short PPO run.
 
-The latest manual Windows check used the actual installed Geometry Dash:
+A historical manual Windows check used the actual installed Geometry Dash (performed before
+these safeguards; its estimated progress figures are unvalidated and are not evidence of skill):
 
 - real window found at **1919×1080**; desktop capture **1920×1080**;
 - live frame test detected both an orange and a blue (player-colour) fill after reset calibration;
 - real Enter reset, Space resume, jump keys, death detection, and safe key release;
 - a **256-step PPO smoke run** (real keys, `CnnPolicy`, 84×84, four-frame stack) completed and saved
   a model;
-- 9 real episodes were recorded. Best episode in that tiny run reached **23.58% estimated progress**
+- 9 real episodes were recorded. Best episode in that tiny run reached **23.58% estimated progress (unverified and potentially spurious)**
   and **5.28s** survival; recent mean episode reward was **−0.50** and mean length **24.6**. This was a
   smoke run with an almost-untrained policy, not evidence of skill.
 - deterministic evaluation of that smoke model over 2 episodes reached only **1.46%** max progress

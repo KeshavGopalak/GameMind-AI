@@ -39,6 +39,17 @@ def test_grayscale_and_normalized_processor():
     assert gray.max() == pytest.approx(1.0)
 
 
+def test_canny_detects_obstacle_edges_and_preserves_shape():
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    frame[20:45, 25:40] = 255
+    processor = ObservationProcessor(ObservationConfig(mode="canny", width=64, height=64, canny_low=30, canny_high=100))
+    result = processor.process(frame)
+    assert result.shape == (1, 64, 64)
+    assert result.dtype == np.uint8
+    assert np.count_nonzero(result) > 0
+    assert set(np.unique(result)) <= {0, 255}
+
+
 def test_rgba_input_drops_alpha():
     processor = ObservationProcessor(ObservationConfig(mode="rgb", width=32, height=32))
     frame = np.zeros((40, 40, 4), dtype=np.uint8)

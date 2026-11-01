@@ -41,7 +41,7 @@ class InputBackend(Protocol):
 class PyAutoGUIBackend:
     """PyAutoGUI keyboard and mouse backend with stuck-key protection."""
 
-    def __init__(self, *, failsafe: bool = True) -> None:
+    def __init__(self, *, failsafe: bool = True, key_pause: bool = True) -> None:
         try:
             import pyautogui
         except ImportError as exc:  # pragma: no cover - installation dependent
@@ -50,6 +50,7 @@ class PyAutoGUIBackend:
                 "or use the example_game/Gymnasium adapters."
             ) from exc
         self._pyautogui = pyautogui
+        self._key_pause = key_pause
         self._held: set[str] = set()
         self._valid_keys = {str(key).lower() for key in pyautogui.KEYBOARD_KEYS}
         # Corner escape hatch: moving the real mouse to a screen corner aborts.
@@ -98,7 +99,7 @@ class PyAutoGUIBackend:
             active_title = str(getattr(self._pyautogui.getActiveWindow(), "title", "") or "")
         except Exception:
             active_title = ""
-        if wanted in active_title.lower() and not getattr(window, "isMinimized", False):
+        if self._is_active_window(window) and not getattr(window, "isMinimized", False):
             # Focus is already correct. Avoid the expensive activate/sleep path
             # on every action; this matters for fast desktop games.
             return
@@ -116,7 +117,7 @@ class PyAutoGUIBackend:
                     "Focus the game manually or disable require_window_focus."
                 ) from exc
             last_title = str(getattr(active, "title", "") or "")
-            if wanted in last_title.lower():
+            if self._is_active_window(window):
                 return
             # Windows can briefly show the Alt+Tab "Task Switching" surface or
             # another transient foreground window. Retry before refusing input;
@@ -126,13 +127,37 @@ class PyAutoGUIBackend:
             "GameMind refuses to send inputs to an unknown window."
         )
 
+    def _is_active_window(self, window: object) -> bool:
+        active = self._pyautogui.getActiveWindow()
+        if active is None:
+            return False
+        expected_handle = getattr(window, "_hWnd", None)
+        active_handle = getattr(active, "_hWnd", None)
+        if expected_handle is not None and active_handle is not None:
+            return expected_handle == active_handle
+        title = str(getattr(window, "title", "") or "").strip().lower()
+        return bool(title) and str(getattr(active, "title", "") or "").strip().lower() == title
+
+    def check_focus(self, window_title: str) -> None:
+        """Fail rather than re-focus if control is lost during a held action."""
+        windows = self._pyautogui.getWindowsWithTitle(window_title)
+        wanted = window_title.strip().lower()
+        exact = [w for w in windows if str(getattr(w, "title", "")).strip().lower() == wanted]
+        candidates = exact or windows
+        if not candidates:
+            raise InputBackendError(f"Game window {window_title!r} disappeared during input.")
+        window = max(candidates, key=lambda w: int(getattr(w, "width", 0)) * int(getattr(w, "height", 0)))
+        if not self._is_active_window(window):
+            raise InputBackendError("Game window focus was lost during input.")
+
     def key_down(self, key: str) -> None:
         key = key.lower()
         if key in self._held:
             return
+        # Track before dispatch: keyDown can fail after the OS received the event.
+        self._held.add(key)
         try:
-            self._pyautogui.keyDown(key)
-            self._held.add(key)
+            self._pyautogui.keyDown(key, _pause=self._key_pause)
         except Exception as exc:
             self.release_all()
             raise InputBackendError(f"Could not press key {key!r}: {exc}") from exc
@@ -140,7 +165,7 @@ class PyAutoGUIBackend:
     def key_up(self, key: str) -> None:
         key = key.lower()
         try:
-            self._pyautogui.keyUp(key)
+            self._pyautogui.keyUp(key, _pause=self._key_pause)
         except Exception as exc:
             self.release_all()
             raise InputBackendError(f"Could not release key {key!r}: {exc}") from exc
@@ -167,7 +192,7 @@ class PyAutoGUIBackend:
             return
         for key in list(self._held):
             try:
-                self._pyautogui.keyUp(key)
+                self._pyautogui.keyUp(key, _pause=self._key_pause)
             except Exception:
                 logger.warning("Could not release key %s during cleanup.", key, exc_info=False)
             finally:

@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-freq", type=int, default=None, help="Approx. env steps between evaluations; 0 disables.")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default=None)
 
-    parser.add_argument("--observation-mode", choices=["state", "rgb", "grayscale"], default=None)
+    parser.add_argument("--observation-mode", choices=["state", "rgb", "grayscale", "canny"], default=None)
     parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--frame-stack", type=int, default=None)

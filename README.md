@@ -27,8 +27,12 @@ the same when you add a new game.
   interrupted-run recovery.
 - **Evaluation and live playback** from saved models, with an explicit compatibility check so a
   model cannot silently see a different observation layout than it was trained on.
-- **Streamlit dashboard** for launching training, watching status/metrics, pausing/stopping, and
-  evaluating or watching saved models.
+- **A persistent game library** (`library/`) with one independent agent per game, per-level
+  checkpoints and history, safe resume, compatibility-checked transfer, shareable skills, and
+  multi-level queues that survive interruption.
+- **Streamlit dashboard** as the main interface: game cards, add game/level, train, pause, resume,
+  stop, queues, models, evaluations, and skills — with training always running in a background
+  worker.
 - **Tests** for adapters, observations, actions, rewards, training, persistence, evaluation, and the
   example environment's Gymnasium API compliance.
 
@@ -97,8 +101,19 @@ Launch the dashboard:
 streamlit run dashboard/app.py
 ```
 
-The full-screen dashboard is optional polish on top of the CLI. The CLI is the primary,
-fully-documented interface.
+### The game library dashboard
+
+The dashboard is the main way to manage games now. Open it, choose **Geometry Dash**, select or add
+a level, and press **Train**. Every session saves its model, configuration, metrics, evaluation, and
+reason for ending; resume picks up the level's best evaluated state. Each game keeps its own agent,
+and each level keeps its own models and history.
+
+```bat
+streamlit run dashboard/app.py
+```
+
+Training runs in a background worker, so closing the tab does not stop it. The CLI still works
+exactly as documented below. Full guide: [docs/library.md](docs/library.md).
 
 ## What reinforcement learning is doing here
 
@@ -209,6 +224,7 @@ GameMind-AI/
 │   ├── geometry_dash.yaml
 │   └── desktop_game.example.yaml
 ├── gamemind/
+│   ├── library/         game/level registry, sessions, skills, transfer, queues, worker control
 │   ├── adapters/        base contract, Gymnasium, example game, desktop, Geometry Dash, registry
 │   ├── observations/    pixel processor and Gymnasium wrappers
 │   ├── actions/         discrete binding helpers and PyAutoGUI input backend
@@ -219,9 +235,10 @@ GameMind-AI/
 │   ├── envs/            single and vectorized environment construction
 │   └── utils/           errors, logging, paths, seeding, vision, serialization
 ├── games/example_game/  Target Chase game and renderer
-├── scripts/             train.py, play.py, evaluate.py, test_setup.py
-├── dashboard/app.py     minimal Streamlit control panel
-├── tests/               pytest suite, including Geometry Dash fake-backend tests
+├── scripts/             train.py, play.py, evaluate.py, test_setup.py, library_worker.py
+├── dashboard/app.py     Streamlit dashboard (games, levels, training, models, knowledge)
+├── library/             game/level profiles, session records, skills (runtime data Git-ignored)
+├── tests/               pytest suite, including Geometry Dash fake-backend and dashboard tests
 ├── models/              generated models (Git-ignored)
 ├── checkpoints/         generated checkpoints (Git-ignored)
 ├── logs/                status, metrics, TensorBoard, monitor logs (Git-ignored)

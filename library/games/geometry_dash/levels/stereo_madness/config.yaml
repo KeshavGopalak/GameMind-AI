@@ -1,0 +1,149 @@
+version: 1
+game:
+  name: geometry_dash__stereo_madness
+  adapter: geometry_dash
+  params:
+    region: null
+    monitor: 1
+    window_title: Geometry Dash
+    require_window_focus: true
+    start_delay: 3.0
+    reset_keys:
+    - enter
+    resume_keys:
+    - space
+    reset_delay: 0.35
+    reset_key_duration: 0.04
+    reset_timeout: 5.0
+    reset_poll_interval: 0.04
+    fps: 30
+    game_frame_rate: 60
+    progress_region: null
+    bar_search_top_fraction: 0.09
+    bar_white_threshold: 200
+    bar_min_width_fraction: 0.15
+    bar_max_height_fraction: 0.08
+    bar_min_aspect: 5.0
+    bar_min_area_fraction: 0.0005
+    bar_left_inset: 8
+    bar_right_inset: 8
+    bar_min_fill_columns: 4
+    fill_color_distance: 30
+    progress_fill_hsv_low:
+    - 8
+    - 90
+    - 90
+    progress_fill_hsv_high:
+    - 45
+    - 255
+    - 255
+    death_min_progress: 0.8
+    reset_progress_max: 0.4
+    allow_bar_completion: false
+    max_progress_rate: 10.0
+    progress_jump_tolerance: 2.0
+    death_confirm_frames: 2
+    completion_pct: 99.0
+    completion_frames: 2
+    lost_gameplay_frames: 20
+    start_progress_threshold: 0.5
+  seed: 42
+observation:
+  mode: grayscale
+  width: 84
+  height: 84
+  stack: 4
+  normalize: false
+  crop:
+  - 0.04
+  - 0.0
+  - 0.0
+  - 0.0
+  canny_low: 50
+  canny_high: 150
+actions:
+  frame_skip: 1
+  duration: 0.02
+  max_duration: 0.3
+  bindings:
+  - name: noop
+    keys: []
+    mouse_click: []
+    mouse_move: null
+    duration: null
+    params: {}
+  - name: jump
+    keys:
+    - space
+    mouse_click: []
+    mouse_move: null
+    duration: 0.03
+    params: {}
+  - name: hold_jump
+    keys:
+    - space
+    mouse_click: []
+    mouse_move: null
+    duration: 0.12
+    params: {}
+  - name: release_jump
+    keys: []
+    mouse_click: []
+    mouse_move: null
+    duration: 0.0
+    params: {}
+reward:
+  components:
+  - type: progress
+    key: max_progress_pct
+    scale: 1.0
+    reset_on: died
+    name: level_progress
+  - type: signal
+    key: died
+    scale: -5.0
+    name: death_penalty
+  - type: signal
+    key: completed
+    scale: 50.0
+    name: level_complete
+  - type: signal
+    key: gameplay_lost
+    scale: -1.0
+    name: lost_gameplay
+  - type: constant
+    value: -0.01
+    name: time_penalty
+  clip:
+  - -20.0
+  - 60.0
+episode:
+  max_steps: 900
+  terminate_on: null
+training:
+  algorithm: ppo
+  timesteps: 50000
+  seed: 42
+  policy: null
+  learning_rate: 0.0003
+  gamma: 0.99
+  n_steps: 256
+  batch_size: 64
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_envs: 1
+  checkpoint_freq: 5000
+  eval_freq: 0
+  n_eval_episodes: 1
+  save_best: false
+  tensorboard: true
+  device: auto
+  verbose: 1
+  progress_bar: false
+  stats_window_size: 100
+  subproc: false
+  extra_params: {}

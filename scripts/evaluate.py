@@ -15,7 +15,7 @@ from gamemind import __version__  # noqa: E402
 from gamemind.config import find_config_for_game, load_game_config  # noqa: E402
 from gamemind.evaluation import run_episodes  # noqa: E402
 from gamemind.training.model_io import config_for_model  # noqa: E402
-from gamemind.utils.errors import GameMindError  # noqa: E402
+from gamemind.utils.errors import GameMindError, ModelCompatibilityError  # noqa: E402
 from gamemind.utils.logging import configure_logging  # noqa: E402
 
 
@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_config(args: argparse.Namespace):
     try:
         return config_for_model(args.model, config_path=args.config, expected_game=args.game)[0]
+    except ModelCompatibilityError:
+        raise
     except GameMindError:
         if args.config:
             return load_game_config(args.config)
